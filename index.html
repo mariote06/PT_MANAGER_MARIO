@@ -293,6 +293,9 @@
   }
   #pt-app-root .history-line { font-size: 13px; color: var(--text); padding: 1px 0; }
   #pt-app-root .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  #pt-app-root .color-dot {
+    display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle;
+  }
 
   #pt-app-root .modal-backdrop {
     position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 60;
@@ -511,11 +514,35 @@
     return 4;
   }
 
+  const GOOGLE_COLORS = [
+    { id: '', nome: '(Nenhuma)', hex: null },
+    { id: '1', nome: 'Lavanda', hex: '#7986cb' },
+    { id: '2', nome: 'Sálvia', hex: '#33b679' },
+    { id: '3', nome: 'Uva', hex: '#8e24aa' },
+    { id: '4', nome: 'Flamingo', hex: '#e67c73' },
+    { id: '5', nome: 'Banana', hex: '#f6bf26' },
+    { id: '6', nome: 'Tangerina', hex: '#f4511e' },
+    { id: '7', nome: 'Pavão', hex: '#039be5' },
+    { id: '8', nome: 'Grafite', hex: '#616161' },
+    { id: '9', nome: 'Mirtilo', hex: '#3f51b5' },
+    { id: '10', nome: 'Manjericão', hex: '#0b8043' },
+    { id: '11', nome: 'Tomate', hex: '#d50000' },
+  ];
+  function googleColorName(id){
+    const gc = GOOGLE_COLORS.find(g => g.id === String(id||''));
+    return gc ? gc.nome : '—';
+  }
+  function googleColorHex(id){
+    const gc = GOOGLE_COLORS.find(g => g.id === String(id||''));
+    return gc ? gc.hex : null;
+  }
+
   function migrateClient(c){
     if(c.tipo === undefined) c.tipo = 'Interno';
     if(c.servico === undefined) c.servico = guessServico(c.atividade);
     if(c.valorCaderneta === undefined) c.valorCaderneta = 0;
     if(c.historico === undefined) c.historico = [];
+    if(c.corGoogle === undefined) c.corGoogle = '';
     return c;
   }
 
@@ -523,7 +550,8 @@
   const CAMPO_LABELS = {
     nome: 'Nome', sexo: 'Sexo', nascimento: 'Nascimento', contacto: 'Contacto', email: 'Email',
     atividade: 'Atividade', sessoesEsperadas: 'Sessões esperadas', cicloInicio: 'Início do ciclo',
-    cicloValidade: 'Validade', tipo: 'Tipo', servico: 'Serviço', valorCaderneta: 'Valor da caderneta'
+    cicloValidade: 'Validade', tipo: 'Tipo', servico: 'Serviço', valorCaderneta: 'Valor da caderneta',
+    corGoogle: 'Cor no Google Calendar'
   };
   function formatChangeValue(campo, val){
     if(campo === 'cicloInicio' || campo === 'cicloValidade' || campo === 'nascimento'){
@@ -531,6 +559,9 @@
     }
     if(campo === 'valorCaderneta'){
       return `${Number(val||0).toFixed(2)}€`;
+    }
+    if(campo === 'corGoogle'){
+      return googleColorName(val);
     }
     if(val === '' || val === null || val === undefined) return '—';
     return String(val);
@@ -557,9 +588,11 @@
 
   // ---------- GOOGLE CALENDAR ----------
   const GOOGLE_CLIENT_ID_KEY = 'google_client_id';
+  const GOOGLE_TRAINING_COLOR_KEY = 'google_training_color_id';
   const GOOGLE_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
   // status: 'not-configured' | 'configured' | 'connected'
   let googleAuth = { clientId: '', token: null, tokenClient: null, status: 'not-configured' };
+  let googleTrainingColorId = '';
 
   function initGoogleAuth(){
     try{
@@ -568,7 +601,15 @@
         googleAuth.clientId = saved;
         googleAuth.status = 'configured';
       }
+      const savedColor = localStorage.getItem(GOOGLE_TRAINING_COLOR_KEY);
+      if(savedColor) googleTrainingColorId = savedColor;
     }catch(e){}
+  }
+
+  function saveGoogleTrainingColor(id){
+    googleTrainingColorId = id;
+    try{ localStorage.setItem(GOOGLE_TRAINING_COLOR_KEY, id); }catch(e){}
+    showToast('Cor de treino guardada');
   }
 
   function setupGoogleTokenClient(){
@@ -624,6 +665,8 @@
       start: { date: client.cicloValidade },
       end: { date: addDays(client.cicloValidade, 1) }
     };
+    // Nota: não aplicamos aqui nenhuma cor por cliente, para nunca coincidir com a cor
+    // escolhida globalmente para "treino dado" (evitaria confundir renovações com treinos).
     try{
       let resp;
       if(client.googleEventId){
@@ -670,54 +713,95 @@
 
   function escapeRegex(s){ return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
-  function findClientMatchForEvent(title){
-    const norm = normHeader(title);
-    let matches = state.clients.filter(c => norm.includes(normHeader(c.nome)));
-    if(matches.length === 1) return { client: matches[0], tier: 'full' };
-    if(matches.length > 1) return { client: null, tier: 'ambiguous' };
-    const firstNameMatches = state.clients.filter(c => {
+  function matchByNameAmong(candidates, norm){
+    const fullMatches = candidates.filter(c => norm.includes(normHeader(c.nome)));
+    if(fullMatches.length === 1) return fullMatches[0];
+    if(fullMatches.length > 1) return null;
+    const firstNameMatches = candidates.filter(c => {
       const firstName = normHeader((c.nome||'').split(' ')[0]);
       if(!firstName) return false;
       const re = new RegExp(`\\b${escapeRegex(firstName)}\\b`);
       return re.test(norm);
     });
-    if(firstNameMatches.length === 1) return { client: firstNameMatches[0], tier: 'firstname' };
-    if(firstNameMatches.length > 1) return { client: null, tier: 'ambiguous' };
+    if(firstNameMatches.length === 1) return firstNameMatches[0];
+    return null;
+  }
+
+  function findClientMatchForEvent(ev){
+    const title = ev.summary || '';
+    const norm = normHeader(title);
+    const byName = matchByNameAmong(state.clients, norm);
+    if(byName) return { client: byName, tier: 'nome' };
+    const anyFullNameHit = state.clients.some(c => norm.includes(normHeader(c.nome)));
+    const anyFirstNameHit = state.clients.some(c => {
+      const firstName = normHeader((c.nome||'').split(' ')[0]);
+      if(!firstName) return false;
+      return new RegExp(`\\b${escapeRegex(firstName)}\\b`).test(norm);
+    });
+    if(anyFullNameHit || anyFirstNameHit) return { client: null, tier: 'ambiguous' };
     return { client: null, tier: 'none' };
   }
 
   async function importTreinosFromGoogleCalendar(days){
     if(!googleAuth.token){ showToast('Liga primeiro ao Google Calendar'); return; }
+    if(!googleTrainingColorId){ showToast('Escolhe primeiro a cor que representa "treino dado" no cartão Google Calendar'); return; }
     try{
       const timeMin = new Date(Date.now() - days*86400000).toISOString();
       const timeMax = new Date().toISOString();
+      const windowStart = timeMin.slice(0,10);
+      const windowEnd = timeMax.slice(0,10);
       const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&singleEvents=true&orderBy=startTime&maxResults=2500`;
       const resp = await fetch(url, { headers: { 'Authorization': `Bearer ${googleAuth.token}` } });
       if(!resp.ok){ showToast('Erro ao ler o Google Calendar'); return; }
       const data = await resp.json();
       const events = data.items || [];
+      const eventsById = new Map(events.map(ev => [ev.id, ev]));
 
-      let added = 0, jaExistia = 0, semCorrespondencia = 0, ambiguo = 0;
+      let added = 0, jaExistia = 0, semCorrespondencia = 0, ambiguo = 0, corDiferente = 0, atualizados = 0, removidos = 0;
 
+      // Reconciliação: treinos já importados cujo evento, dentro desta janela, foi apagado ou reagendado no Calendar
+      state.clients.forEach(c => {
+        c.treinos = (c.treinos || []).filter(t => {
+          if(!t.googleEventId) return true; // registado manualmente, nunca tocar
+          if(t.data < windowStart || t.data > windowEnd) return true; // fora da janela consultada, não mexe
+          const ev = eventsById.get(t.googleEventId);
+          if(!ev){
+            removidos++;
+            return false; // evento já não existe no Calendar -> remove o treino
+          }
+          const novaData = (ev.start && (ev.start.date || (ev.start.dateTime||'').slice(0,10))) || t.data;
+          if(novaData !== t.data){
+            t.data = novaData;
+            atualizados++;
+          }
+          return true;
+        });
+      });
+
+      // Importação: eventos novos, com a cor certa, ainda não registados em nenhum cliente
       events.forEach(ev => {
+        if(String(ev.colorId||'') !== googleTrainingColorId){ corDiferente++; return; }
         const rawDate = (ev.start && (ev.start.date || (ev.start.dateTime||'').slice(0,10))) || null;
         if(!rawDate) return;
         const title = ev.summary || '';
-        const { client, tier } = findClientMatchForEvent(title);
+        const jaRegistado = state.clients.some(c => (c.treinos||[]).some(t => t.googleEventId === ev.id));
+        if(jaRegistado){ jaExistia++; return; }
+        const { client, tier } = findClientMatchForEvent(ev);
         if(tier === 'ambiguous'){ ambiguo++; return; }
         if(!client){ semCorrespondencia++; return; }
         client.treinos = client.treinos || [];
-        const already = client.treinos.some(t => t.googleEventId === ev.id);
-        if(already){ jaExistia++; return; }
         client.treinos.push({ id: uid(), data: rawDate, nota: title, googleEventId: ev.id });
         added++;
       });
 
       await saveData();
       let msg = `${added} treino(s) importado(s)`;
+      if(atualizados) msg += `, ${atualizados} data(s) atualizada(s)`;
+      if(removidos) msg += `, ${removidos} removido(s) (evento apagado)`;
       if(jaExistia) msg += `, ${jaExistia} já existiam`;
       if(semCorrespondencia) msg += `, ${semCorrespondencia} sem cliente correspondente`;
       if(ambiguo) msg += `, ${ambiguo} ambíguo(s)`;
+      if(corDiferente) msg += `, ${corDiferente} ignorado(s) por cor diferente`;
       showToast(msg);
       render();
     }catch(e){
@@ -1298,10 +1382,17 @@
         <h3>Google Calendar</h3>
         <div class="sync-status sync-ok">● Ligado</div>
         <button class="btn btn-primary" id="btnSyncAllGoogle" style="margin-top:12px">Sincronizar validades de todos os clientes</button>
+
+        <label style="margin-top:16px">Cor que representa "treino dado" no Calendar</label>
+        <select id="googleTrainingColorInput">
+          ${GOOGLE_COLORS.map(gc => `<option value="${gc.id}" ${googleTrainingColorId===gc.id?'selected':''} ${gc.hex?`style="background:${gc.hex}33"`:''}>${gc.nome}</option>`).join('')}
+        </select>
+        <p style="color:var(--text-muted);font-size:12px;margin:8px 0 0">Marca com esta cor, no Google Calendar, qualquer evento que seja um treino real dado — de qualquer cliente. A importação só considera eventos com esta cor.</p>
+
         <label style="margin-top:14px">Importar treinos dos últimos quantos dias?</label>
         <input type="number" id="googleImportDays" value="60" min="1" max="365">
         <button class="btn btn-secondary" id="btnImportTreinosGoogle" style="margin-top:10px">Importar treinos do Google Calendar</button>
-        <p style="color:var(--text-muted);font-size:12px;margin:10px 0 0">Procura o nome de um cliente já existente no título de cada evento do calendário. Eventos ambíguos (o nome coincide com mais que um cliente) ou sem correspondência são ignorados. Nunca duplica um evento já importado.</p>
+        <p style="color:var(--text-muted);font-size:12px;margin:10px 0 0">Entre os eventos com essa cor, procura o nome de um cliente já existente no título. Eventos ambíguos (o nome coincide com mais que um cliente) ou sem correspondência são ignorados. Nunca duplica um evento já importado.</p>
         <button class="btn btn-secondary" id="btnDisconnectGoogle" style="margin-top:12px">Desligar</button>
       </div>
     `;
@@ -1455,7 +1546,7 @@
           ${treinosOrdenados.length===0 ? '<div class="empty-state">Ainda sem treinos registados.</div>' :
             treinosOrdenados.map(t => `
               <div class="list-item">
-                <span>${fmtDateShort(t.data)} ${t.nota?`— ${escapeHtml(t.nota)}`:''}</span>
+                <span data-edit-treino="${t.id}" style="cursor:pointer">${fmtDateShort(t.data)} ${t.nota?`— ${escapeHtml(t.nota)}`:''}${t.googleEventId?' <span class="badge-inline bday">Calendar</span>':''}</span>
                 <button class="del" data-del-treino="${t.id}">×</button>
               </div>
             `).join('')
@@ -1593,6 +1684,29 @@
 
   function renderModal(modal){
     const c = getClient(modal.id);
+    if(modal.type === 'editTreino'){
+      const ec = getClient(modal.clientId);
+      const t = ec ? (ec.treinos||[]).find(x => x.id === modal.treinoId) : null;
+      if(!t) return '';
+      const clientesOrdenados = state.clients.slice().sort((a,b) => a.nome.localeCompare(b.nome));
+      return `
+        <div class="modal-sheet">
+          <h3>Editar treino</h3>
+          <label>Data</label>
+          <input type="date" id="m_editTreinoData" value="${t.data}">
+          <label>Nota</label>
+          <input type="text" id="m_editTreinoNota" value="${escapeAttr(t.nota||'')}">
+          <label>Cliente</label>
+          <select id="m_editTreinoCliente">
+            ${clientesOrdenados.map(cc => `<option value="${cc.id}" ${cc.id===ec.id?'selected':''}>${escapeHtml(cc.nome)}</option>`).join('')}
+          </select>
+          ${t.googleEventId ? '<p style="color:var(--text-muted);font-size:12px;margin:10px 0 0">Este treino veio do Google Calendar. Alterações aqui mantêm-se mesmo que voltes a sincronizar — mas se apagares o evento no Calendar, este treino é removido na sincronização seguinte.</p>' : ''}
+          <div class="btn-row" style="margin-top:16px">
+            <button class="btn btn-secondary" id="modalCancel">Cancelar</button>
+            <button class="btn btn-primary" id="modalConfirmEditTreino">Guardar</button>
+          </div>
+        </div>`;
+    }
     if(modal.type === 'treino'){
       return `
         <div class="modal-sheet">
@@ -1741,6 +1855,9 @@
     const btnSyncAllGoogle = root.querySelector('#btnSyncAllGoogle');
     if(btnSyncAllGoogle) btnSyncAllGoogle.onclick = () => syncAllClientsToGoogleCalendar();
 
+    const googleTrainingColorInput = root.querySelector('#googleTrainingColorInput');
+    if(googleTrainingColorInput) googleTrainingColorInput.onchange = (e) => saveGoogleTrainingColor(e.target.value);
+
     const btnImportTreinosGoogle = root.querySelector('#btnImportTreinosGoogle');
     if(btnImportTreinosGoogle) btnImportTreinosGoogle.onclick = () => {
       const days = parseInt(root.querySelector('#googleImportDays').value) || 60;
@@ -1841,6 +1958,10 @@
       }
     };
 
+    ov.querySelectorAll('[data-edit-treino]').forEach(el => {
+      el.onclick = () => { state.modal = { type: 'editTreino', clientId: state.activeId, treinoId: el.dataset.editTreino }; showModal(); };
+    });
+
     ov.querySelectorAll('[data-del-treino]').forEach(b => {
       b.onclick = async () => {
         const c = getClient(state.activeId);
@@ -1919,6 +2040,29 @@
     if(cancel) cancel.onclick = () => { state.modal = null; showModal(); };
 
     mb.onclick = (e) => { if(e.target === mb){ state.modal = null; showModal(); } };
+
+    const confirmEditTreino = mb.querySelector('#modalConfirmEditTreino');
+    if(confirmEditTreino) confirmEditTreino.onclick = async () => {
+      const oldClient = getClient(state.modal.clientId);
+      const treino = (oldClient.treinos||[]).find(t => t.id === state.modal.treinoId);
+      if(!treino){ state.modal = null; render(); return; }
+      const novaData = mb.querySelector('#m_editTreinoData').value || treino.data;
+      const novaNota = mb.querySelector('#m_editTreinoNota').value.trim();
+      const novoClienteId = mb.querySelector('#m_editTreinoCliente').value;
+      treino.data = novaData;
+      treino.nota = novaNota;
+      if(novoClienteId !== oldClient.id){
+        oldClient.treinos = oldClient.treinos.filter(t => t.id !== treino.id);
+        const newClient = getClient(novoClienteId);
+        newClient.treinos = newClient.treinos || [];
+        newClient.treinos.push(treino);
+        state.activeId = novoClienteId;
+      }
+      await saveData();
+      state.modal = null;
+      showToast('Treino atualizado');
+      render();
+    };
 
     const confirmTreino = mb.querySelector('#modalConfirmTreino');
     if(confirmTreino) confirmTreino.onclick = async () => {
