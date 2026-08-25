@@ -530,7 +530,7 @@
     return Math.round((next-t)/86400000);
   }
   function inicioCaderneta(client){
-    return addDays(client.cicloValidade, -28);
+    return client.inicioCadernetaAtual || addDays(client.cicloValidade, -28);
   }
   function cycleTrainedCount(client){
     const inicio = inicioCaderneta(client);
@@ -597,6 +597,7 @@
     if(c.historico === undefined) c.historico = [];
     if(c.corGoogle === undefined) c.corGoogle = '';
     if(c.pagoAte === undefined) c.pagoAte = '';
+    if(c.inicioCadernetaAtual === undefined) c.inicioCadernetaAtual = addDays(c.cicloValidade, -28);
     return c;
   }
 
@@ -605,10 +606,10 @@
     nome: 'Nome', sexo: 'Sexo', nascimento: 'Nascimento', contacto: 'Contacto', email: 'Email',
     atividade: 'Atividade', sessoesEsperadas: 'Sessões esperadas', cicloInicio: 'Início do Serviço',
     cicloValidade: 'Validade', tipo: 'Tipo', servico: 'Serviço', valorCaderneta: 'Valor da caderneta',
-    corGoogle: 'Cor no Google Calendar'
+    corGoogle: 'Cor no Google Calendar', inicioCadernetaAtual: 'Início da Caderneta', pagoAte: 'Pago adiantado até'
   };
   function formatChangeValue(campo, val){
-    if(campo === 'cicloInicio' || campo === 'cicloValidade' || campo === 'nascimento'){
+    if(campo === 'cicloInicio' || campo === 'cicloValidade' || campo === 'nascimento' || campo === 'inicioCadernetaAtual' || campo === 'pagoAte'){
       return val ? fmtDateShort(val) : '—';
     }
     if(campo === 'valorCaderneta'){
@@ -1280,7 +1281,7 @@
     const [start, end] = monthRange(key);
     let all = [];
     state.clients.forEach(c => {
-      const renewalDates = renewalDatesInMonth(c.cicloInicio, start, end);
+      const renewalDates = renewalDatesInMonth(c.cicloValidade, start, end);
       renewalDates.forEach(renewalDate => {
         const cadernetaStart = addDays(renewalDate, -28);
         (c.treinos||[]).forEach(t => {
@@ -1313,7 +1314,7 @@
     const [start,end] = monthRange(key);
     let rows = [];
     state.clients.forEach(c => {
-      let dates = renewalDatesInMonth(c.cicloInicio, start, end);
+      let dates = renewalDatesInMonth(c.cicloValidade, start, end);
       if(c.pagoAte){
         dates = dates.filter(d => d > c.pagoAte); // já pago adiantado até esta data: não conta como receita nova
       }
@@ -1701,7 +1702,7 @@
     const c = existing || {
       id: '', nome: '', sexo: 'F', nascimento: '', contacto: '', email: '',
       atividade: '', sessoesEsperadas: 4, cicloInicio: todayISO(),
-      cicloValidade: addDays(todayISO(), 28), treinos: [], pagamentos: [], ativo: true,
+      cicloValidade: addDays(todayISO(), 28), inicioCadernetaAtual: todayISO(), treinos: [], pagamentos: [], ativo: true,
       tipo: 'Interno', servico: 'PT 60', valorCaderneta: 0, pagoAte: ''
     };
     const isEdit = !!existing;
@@ -1739,6 +1740,10 @@
 
           <label>Início do Serviço</label>
           <input type="date" id="f_inicio" value="${c.cicloInicio||''}">
+
+          <label>Início da Caderneta atual</label>
+          <input type="date" id="f_inicioCaderneta" value="${inicioCaderneta(c)||''}">
+          <p style="color:var(--text-muted);font-size:12px;margin:8px 0 0">A data a partir da qual os treinos contam para a caderneta em curso. Atualiza-se sozinha a cada renovação, mas podes corrigi-la manualmente se precisares.</p>
 
           <label>Validade da caderneta</label>
           <input type="date" id="f_validade" value="${c.cicloValidade||''}">
@@ -2110,6 +2115,7 @@
         sessoesEsperadas: parseInt(ov.querySelector('#f_sessoes').value) || 4,
         cicloInicio: ov.querySelector('#f_inicio').value || todayISO(),
         cicloValidade: ov.querySelector('#f_validade').value || addDays(todayISO(),28),
+        inicioCadernetaAtual: ov.querySelector('#f_inicioCaderneta').value || addDays(ov.querySelector('#f_validade').value || todayISO(), -28),
         tipo: ov.querySelector('#f_tipo').value,
         servico: ov.querySelector('#f_servico').value,
         valorCaderneta: parseFloat(ov.querySelector('#f_valorCaderneta').value) || 0,
@@ -2229,14 +2235,14 @@
     const confirmRenovar = mb.querySelector('#modalConfirmRenovar');
     if(confirmRenovar) confirmRenovar.onclick = async () => {
       const c = getClient(state.modal.id);
-      const antesInicio = c.cicloInicio, antesValidade = c.cicloValidade;
-      const novoInicio = c.cicloValidade;
-      const novaValidade = addDays(novoInicio, 28);
+      const antesInicioCaderneta = inicioCaderneta(c), antesValidade = c.cicloValidade;
+      const novoInicioCaderneta = c.cicloValidade;
+      const novaValidade = addDays(novoInicioCaderneta, 28);
       logChange(c, 'Renovação de caderneta', [
-        { campo: 'cicloInicio', rotulo: 'Início do Serviço', antes: antesInicio, depois: novoInicio },
+        { campo: 'inicioCadernetaAtual', rotulo: 'Início da Caderneta', antes: antesInicioCaderneta, depois: novoInicioCaderneta },
         { campo: 'cicloValidade', rotulo: 'Validade', antes: antesValidade, depois: novaValidade }
       ]);
-      c.cicloInicio = novoInicio;
+      c.inicioCadernetaAtual = novoInicioCaderneta;
       c.cicloValidade = novaValidade;
       if(c.googleEventId && googleAuth.token) await syncClientToGoogleCalendar(c);
       await saveData();
