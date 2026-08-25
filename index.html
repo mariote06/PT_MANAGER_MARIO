@@ -131,7 +131,6 @@
     background: transparent; flex-shrink: 0;
   }
   #pt-app-root .stamp.filled { background: var(--lime); border-color: var(--lime); }
-  #pt-app-root .stamp.extra { background: var(--amber); border-color: var(--amber); }
   #pt-app-root .stamps-label { font-size: 11px; color: var(--text-dim); margin-left: 4px; font-family: ui-monospace, monospace; }
 
   /* Bottom nav */
@@ -197,7 +196,6 @@
     display: flex; align-items: center; justify-content: center; font-size: 13px; color: var(--text-dim); font-weight: 700;
   }
   #pt-app-root .stamp-lg.filled { background: var(--lime); border-color: var(--lime); color: #12140c; }
-  #pt-app-root .stamp-lg.extra { background: var(--amber); border-color: var(--amber); color: #2a1d05; }
 
   #pt-app-root .btn {
     display: inline-flex; align-items: center; justify-content: center; gap: 6px;
@@ -1226,9 +1224,8 @@
       const done = cycleTrainedCount(c);
       const total = c.sessoesEsperadas;
       let stamps = '';
-      for(let i=0; i<Math.max(total,done); i++){
-        const cls = i<total ? (i<done?'filled':'') : 'extra';
-        stamps += `<div class="stamp ${cls}"></div>`;
+      for(let i=0;i<total;i++){
+        stamps += `<div class="stamp ${i<done?'filled':''}"></div>`;
       }
       const bdaySoon = daysToNextBirthday(c.nascimento) <= 7;
       const tipoCls = c.tipo === 'Externo' ? 'externo' : 'interno';
@@ -1551,12 +1548,8 @@
     const done = cycleTrainedCount(c);
     const total = c.sessoesEsperadas;
     let stampsLg = '';
-    for(let i=0; i<Math.max(total,done); i++){
-      if(i < total){
-        stampsLg += `<div class="stamp-lg ${i<done?'filled':''}">${i<done?'✓':''}</div>`;
-      } else {
-        stampsLg += `<div class="stamp-lg extra">✓</div>`;
-      }
+    for(let i=0;i<total;i++){
+      stampsLg += `<div class="stamp-lg ${i<done?'filled':''}">${i<done?'✓':''}</div>`;
     }
     const daysLeft = daysBetween(todayISO(), c.cicloValidade);
     const cadernetasHistorico = computeCadernetasHistorico(c);
