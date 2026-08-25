@@ -296,6 +296,16 @@
   #pt-app-root .color-dot {
     display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle;
   }
+  #pt-app-root .caderneta-block {
+    padding: 12px 0; border-bottom: 1px solid var(--surface2);
+  }
+  #pt-app-root .caderneta-block:last-child { border-bottom: none; }
+  #pt-app-root .caderneta-block-head {
+    display: flex; justify-content: space-between; align-items: center; font-size: 13.5px; font-weight: 700; margin-bottom: 2px;
+  }
+  #pt-app-root .caderneta-block-range {
+    font-size: 11.5px; color: var(--text-dim); font-family: ui-monospace, monospace; margin-bottom: 8px;
+  }
 
   #pt-app-root .modal-backdrop {
     position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 60;
@@ -504,6 +514,26 @@
     return (client.treinos||[]).filter(t => t.data >= client.cicloInicio).length;
   }
   function uid(){ return 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+
+  function computeCadernetasHistorico(client){
+    const sessoes = client.sessoesEsperadas || 4;
+    const treinosOrdenados = (client.treinos || []).slice().sort((a,b) => a.data.localeCompare(b.data));
+    const blocos = [];
+    for(let i = 0; i < treinosOrdenados.length; i += sessoes){
+      const bloco = treinosOrdenados.slice(i, i + sessoes);
+      const inicio = bloco[0].data;
+      const fim = bloco[bloco.length - 1].data;
+      const dias = daysBetween(inicio, fim);
+      blocos.push({
+        numero: blocos.length + 1,
+        treinos: bloco,
+        completo: bloco.length >= sessoes,
+        inicio, fim, dias,
+        prolongada: dias > 28
+      });
+    }
+    return blocos;
+  }
 
   function parseSessions(atividade){
     const a = (atividade||'').toLowerCase();
@@ -1499,7 +1529,7 @@
       stampsLg += `<div class="stamp-lg ${i<done?'filled':''}">${i<done?'✓':''}</div>`;
     }
     const daysLeft = daysBetween(todayISO(), c.cicloValidade);
-    const treinosOrdenados = (c.treinos||[]).slice().sort((a,b)=>b.data.localeCompare(a.data));
+    const cadernetasHistorico = computeCadernetasHistorico(c);
     const pagamentosOrdenados = (c.pagamentos||[]).slice().sort((a,b)=>b.data.localeCompare(a.data));
     const totalPago = (c.pagamentos||[]).reduce((s,p)=>s+Number(p.valor||0),0);
     const bdayDays = daysToNextBirthday(c.nascimento);
@@ -1542,12 +1572,22 @@
         </div>
 
         <div class="card">
-          <h3>Histórico de treinos (${(c.treinos||[]).length})</h3>
-          ${treinosOrdenados.length===0 ? '<div class="empty-state">Ainda sem treinos registados.</div>' :
-            treinosOrdenados.map(t => `
-              <div class="list-item">
-                <span data-edit-treino="${t.id}" style="cursor:pointer">${fmtDateShort(t.data)} ${t.nota?`— ${escapeHtml(t.nota)}`:''}${t.googleEventId?' <span class="badge-inline bday">Calendar</span>':''}</span>
-                <button class="del" data-del-treino="${t.id}">×</button>
+          <h3>Histórico de treinos por caderneta (${(c.treinos||[]).length} no total)</h3>
+          <p style="color:var(--text-muted);font-size:12px;margin:0 0 12px">Reconstrução automática: agrupa os treinos em blocos do tamanho das sessões esperadas (${c.sessoesEsperadas}). Um bloco que tenha demorado mais de 4 semanas a completar-se é assinalado como prolongado. Toca num treino para editar ou reatribuir.</p>
+          ${cadernetasHistorico.length===0 ? '<div class="empty-state">Ainda sem treinos registados.</div>' :
+            cadernetasHistorico.slice().reverse().map(bloco => `
+              <div class="caderneta-block">
+                <div class="caderneta-block-head">
+                  <span>Caderneta ${bloco.numero}${!bloco.completo?' (em curso)':''}${bloco.prolongada?' <span class="badge-tipo externo">Prolongada</span>':''}</span>
+                  <span class="mono">${bloco.treinos.length}/${c.sessoesEsperadas}</span>
+                </div>
+                <div class="caderneta-block-range">${fmtDateShort(bloco.inicio)} – ${fmtDateShort(bloco.fim)}${bloco.prolongada?` · ${bloco.dias} dias`:''}</div>
+                ${bloco.treinos.map(t => `
+                  <div class="list-item">
+                    <span data-edit-treino="${t.id}" style="cursor:pointer">${fmtDateShort(t.data)} ${t.nota?`— ${escapeHtml(t.nota)}`:''}${t.googleEventId?' <span class="badge-inline bday">Calendar</span>':''}</span>
+                    <button class="del" data-del-treino="${t.id}">×</button>
+                  </div>
+                `).join('')}
               </div>
             `).join('')
           }
