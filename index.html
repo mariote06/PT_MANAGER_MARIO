@@ -596,6 +596,7 @@
     if(c.valorCaderneta === undefined) c.valorCaderneta = 0;
     if(c.historico === undefined) c.historico = [];
     if(c.corGoogle === undefined) c.corGoogle = '';
+    if(c.pagoAte === undefined) c.pagoAte = '';
     return c;
   }
 
@@ -1299,7 +1300,10 @@
     const [start,end] = monthRange(key);
     let rows = [];
     state.clients.forEach(c => {
-      const dates = renewalDatesInMonth(c.cicloInicio, start, end);
+      let dates = renewalDatesInMonth(c.cicloInicio, start, end);
+      if(c.pagoAte){
+        dates = dates.filter(d => d > c.pagoAte); // já pago adiantado até esta data: não conta como receita nova
+      }
       if(dates.length > 0){
         rows.push({ c, count: dates.length, valor: dates.length * Number(c.valorCaderneta||0) });
       }
@@ -1604,6 +1608,7 @@
           <div class="field-row"><span class="k">Atividade</span><span class="v">${escapeHtml(c.atividade||'—')}</span></div>
           <div class="field-row"><span class="k">Serviço (comissão)</span><span class="v">${escapeHtml(c.servico||'—')}</span></div>
           <div class="field-row"><span class="k">Valor da caderneta</span><span class="v">${Number(c.valorCaderneta||0).toFixed(2)}€</span></div>
+          ${c.pagoAte ? `<div class="field-row"><span class="k">Pago adiantado até</span><span class="v">${fmtDateShort(c.pagoAte)}</span></div>` : ''}
         </div>
 
         <div class="card">
@@ -1683,7 +1688,7 @@
       id: '', nome: '', sexo: 'F', nascimento: '', contacto: '', email: '',
       atividade: '', sessoesEsperadas: 4, cicloInicio: todayISO(),
       cicloValidade: addDays(todayISO(), 28), treinos: [], pagamentos: [], ativo: true,
-      tipo: 'Interno', servico: 'PT 60', valorCaderneta: 0
+      tipo: 'Interno', servico: 'PT 60', valorCaderneta: 0, pagoAte: ''
     };
     const isEdit = !!existing;
     return `
@@ -1740,6 +1745,10 @@
 
           <label>Valor da caderneta (€, cobrado a cada renovação)</label>
           <input type="number" id="f_valorCaderneta" value="${c.valorCaderneta}" min="0" step="0.01">
+
+          <label>Pago adiantado até (opcional)</label>
+          <input type="date" id="f_pagoAte" value="${c.pagoAte||''}">
+          <p style="color:var(--text-muted);font-size:12px;margin:8px 0 0">Se o cliente pagar várias cadernetas de uma vez (ex: 6 de seguida), define aqui até quando já está pago. A previsão de receita em Finanças deixa de contar as renovações até essa data como dinheiro novo — as renovações continuam a funcionar normalmente para efeitos de treinos.</p>
         </div>
 
         <button class="btn btn-primary" id="btnSaveClient">${isEdit?'Guardar alterações':'Adicionar cliente'}</button>
@@ -2089,6 +2098,7 @@
         tipo: ov.querySelector('#f_tipo').value,
         servico: ov.querySelector('#f_servico').value,
         valorCaderneta: parseFloat(ov.querySelector('#f_valorCaderneta').value) || 0,
+        pagoAte: ov.querySelector('#f_pagoAte').value || '',
       };
       if(state.view === 'edit'){
         const c = getClient(state.activeId);
