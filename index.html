@@ -639,6 +639,14 @@
     entry.changes.forEach(ch => { client[ch.campo] = ch.antes; });
     return true;
   }
+  function undoSpecificChange(client, entryId){
+    const idx = (client.historico||[]).findIndex(h => h.id === entryId);
+    if(idx === -1) return false;
+    const entry = client.historico[idx];
+    entry.changes.forEach(ch => { client[ch.campo] = ch.antes; });
+    client.historico.splice(idx, 1);
+    return true;
+  }
 
   // ---------- GOOGLE CALENDAR ----------
   const GOOGLE_CLIENT_ID_KEY = 'google_client_id';
@@ -1670,16 +1678,17 @@
 
         <div class="card">
           <h3>Histórico de alterações</h3>
-          <button class="btn btn-secondary" id="btnDesfazer" ${(!c.historico || c.historico.length===0) ? 'disabled' : ''}>↩ Desfazer última alteração</button>
-          ${(!c.historico || c.historico.length===0) ? '<div class="empty-state" style="margin-top:10px">Sem alterações registadas.</div>' :
-            `<div style="margin-top:12px">` + c.historico.map(h => `
+          ${(!c.historico || c.historico.length===0) ? '<div class="empty-state">Sem alterações registadas.</div>' :
+            c.historico.map((h,idx) => `
               <div class="history-entry">
                 <div class="history-head">
                   <span>${escapeHtml(h.label)}</span><span class="mono">${fmtDateTime(h.quando)}</span>
                 </div>
                 ${h.changes.map(ch => `<div class="history-line">${escapeHtml(ch.rotulo)}: ${escapeHtml(formatChangeValue(ch.campo, ch.antes))} → ${escapeHtml(formatChangeValue(ch.campo, ch.depois))}</div>`).join('')}
+                ${idx>0 ? '<div style="color:var(--text-dim);font-size:11px;margin-top:6px">Há alterações mais recentes que podem ter mexido nos mesmos campos.</div>' : ''}
+                <button class="btn btn-secondary" data-undo-entry="${h.id}" style="margin-top:8px;width:auto;padding:6px 14px;font-size:12px">↩ Desfazer esta alteração</button>
               </div>
-            `).join('') + `</div>`
+            `).join('')
           }
         </div>
 
@@ -2054,16 +2063,17 @@
     const btnDelete = ov.querySelector('#btnDeleteClient');
     if(btnDelete) btnDelete.onclick = () => { state.modal = {type:'deleteClient', id: state.activeId}; showModal(); };
 
-    const btnDesfazer = ov.querySelector('#btnDesfazer');
-    if(btnDesfazer) btnDesfazer.onclick = async () => {
-      const c = getClient(state.activeId);
-      const ok = undoLastChange(c);
-      if(ok){
-        await saveData();
-        showToast('Última alteração desfeita');
-        render();
-      }
-    };
+    ov.querySelectorAll('[data-undo-entry]').forEach(btn => {
+      btn.onclick = async () => {
+        const c = getClient(state.activeId);
+        const ok = undoSpecificChange(c, btn.dataset.undoEntry);
+        if(ok){
+          await saveData();
+          showToast('Alteração desfeita');
+          render();
+        }
+      };
+    });
 
     ov.querySelectorAll('[data-edit-treino]').forEach(el => {
       el.onclick = () => { state.modal = { type: 'editTreino', clientId: state.activeId, treinoId: el.dataset.editTreino }; showModal(); };
