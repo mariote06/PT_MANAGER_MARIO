@@ -361,6 +361,23 @@
   const PATAMAR_INTERNO = 80;   // treinos combinados (interno+externo) no mês
   const ISENCAO_EXTERNO = 100;  // treinos externos no mês, isentos os de menor valor primeiro
 
+  // Preço por sessão cobrado ao cliente (coluna "Valor 12 Semanas" da tabela de comissões 2026)
+  const VALOR_SESSAO_CLIENTE = {
+    'Coach Training':   40.00,
+    'PT Pilates Ind.':  40.00,
+    'PT Pilates Group': 34.00,
+    'PT 60':            34.00,
+    'PT 30':            23.00,
+    'PT Group 60':      23.00,
+    'PT Group 30':      18.00,
+    // Mat Pilates fica de fora: a tabela original tem "Variável", sem valor fixo
+  };
+  function suggestValorCaderneta(servico, sessoesEsperadas){
+    const preco = VALOR_SESSAO_CLIENTE[servico];
+    if(!preco) return null;
+    return Math.round(preco * (sessoesEsperadas||0) * 100) / 100;
+  }
+
   function guessServico(atividade){
     const a = (atividade||'').toLowerCase();
     const is30 = a.includes('30 min') || a.includes('30 minutos');
@@ -1798,12 +1815,13 @@
         </div>`;
     }
     if(modal.type === 'pagamento'){
+      const valorSugerido = Number(c.valorCaderneta||0) > 0 ? Number(c.valorCaderneta).toFixed(2) : '';
       return `
         <div class="modal-sheet">
           <h3>Registar pagamento</h3>
           <p>Adicionar um pagamento para ${escapeHtml(c.nome)}.</p>
           <label>Valor (€)</label>
-          <input type="number" id="m_pagValor" placeholder="0.00" step="0.01">
+          <input type="number" id="m_pagValor" placeholder="0.00" step="0.01" value="${valorSugerido}">
           <label>Data</label>
           <input type="date" id="m_pagData" value="${todayISO()}">
           <label>Nota (opcional)</label>
@@ -2107,6 +2125,23 @@
       });
       const sessoesInput = ov.querySelector('#f_sessoes');
       if(sessoesInput) sessoesInput.addEventListener('input', () => sessoesInput.dataset.touched = '1');
+    }
+
+    // auto-suggest valor da caderneta a partir do serviço (PT 60 = 34€/sessão, PT 30 = 23€/sessão)
+    const servicoInput = ov.querySelector('#f_servico');
+    const valorCadernetaInput = ov.querySelector('#f_valorCaderneta');
+    const sessoesInputForValor = ov.querySelector('#f_sessoes');
+    if(valorCadernetaInput){
+      valorCadernetaInput.addEventListener('input', () => valorCadernetaInput.dataset.touched = '1');
+      const trySuggestValor = () => {
+        if(valorCadernetaInput.dataset.touched) return;
+        const servico = servicoInput ? servicoInput.value : null;
+        const sessoes = parseInt(sessoesInputForValor ? sessoesInputForValor.value : 0) || 0;
+        const sugestao = suggestValorCaderneta(servico, sessoes);
+        if(sugestao !== null) valorCadernetaInput.value = sugestao;
+      };
+      if(servicoInput) servicoInput.addEventListener('change', trySuggestValor);
+      if(sessoesInputForValor) sessoesInputForValor.addEventListener('input', trySuggestValor);
     }
   }
 
