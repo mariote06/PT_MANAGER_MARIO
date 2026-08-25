@@ -1269,10 +1269,15 @@
 
   // ---------- FINANÇAS ----------
   function computeTreinosMes(key){
+    const [start, end] = monthRange(key);
     let all = [];
     state.clients.forEach(c => {
-      (c.treinos||[]).forEach(t => {
-        if(monthKey(t.data) === key) all.push({c, t});
+      const renewalDates = renewalDatesInMonth(c.cicloInicio, start, end);
+      renewalDates.forEach(renewalDate => {
+        const cadernetaStart = addDays(renewalDate, -28);
+        (c.treinos||[]).forEach(t => {
+          if(t.data >= cadernetaStart && t.data < renewalDate) all.push({c, t});
+        });
       });
     });
     const interno = all.filter(x => x.c.tipo !== 'Externo');
@@ -1542,7 +1547,7 @@
           <span class="k"><strong>Saldo estimado</strong></span><span class="v"><strong>${(s.comissaoInterno - s.comissaoExterno).toFixed(2)}€</strong></span>
         </div>
       </div>
-      <div class="empty-state" style="text-align:left">Comissão calculada com base na tabela de 2026: patamar interno &lt; 80 / ≥ 80 treinos combinados por mês; treinos externos acima de ${ISENCAO_EXTERNO}/mês ficam isentos de comissão, começando pelos de menor valor.</div>
+      <div class="empty-state" style="text-align:left">Conta os treinos das cadernetas cuja renovação (sexta-feira) caiu neste mês — não os treinos por data de calendário. Comissão calculada com base na tabela de 2026: patamar interno &lt; 80 / ≥ 80 treinos combinados por mês; treinos externos acima de ${ISENCAO_EXTERNO}/mês ficam isentos de comissão, começando pelos de menor valor.</div>
     `;
   }
 
