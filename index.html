@@ -131,6 +131,7 @@
     background: transparent; flex-shrink: 0;
   }
   #pt-app-root .stamp.filled { background: var(--lime); border-color: var(--lime); }
+  #pt-app-root .stamp.extra { background: var(--amber); border-color: var(--amber); }
   #pt-app-root .stamps-label { font-size: 11px; color: var(--text-dim); margin-left: 4px; font-family: ui-monospace, monospace; }
 
   /* Bottom nav */
@@ -196,6 +197,7 @@
     display: flex; align-items: center; justify-content: center; font-size: 13px; color: var(--text-dim); font-weight: 700;
   }
   #pt-app-root .stamp-lg.filled { background: var(--lime); border-color: var(--lime); color: #12140c; }
+  #pt-app-root .stamp-lg.extra { background: var(--amber); border-color: var(--amber); color: #2a1d05; }
 
   #pt-app-root .btn {
     display: inline-flex; align-items: center; justify-content: center; gap: 6px;
@@ -642,6 +644,8 @@
     showToast('Cor de treino guardada');
   }
 
+  const GOOGLE_AUTO_IMPORT_DAYS = 84; // 12 semanas
+
   function setupGoogleTokenClient(){
     if(typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) return false;
     if(!googleAuth.clientId) return false;
@@ -649,14 +653,19 @@
       client_id: googleAuth.clientId,
       scope: GOOGLE_SCOPE,
       callback: (resp) => {
+        const wasSilent = googleAuth._silentAttempt;
+        googleAuth._silentAttempt = false;
         if(resp.error){
-          showToast('Erro ao ligar ao Google: ' + resp.error);
+          if(!wasSilent) showToast('Erro ao ligar ao Google: ' + resp.error);
           return;
         }
         googleAuth.token = resp.access_token;
         googleAuth.status = 'connected';
-        showToast('Ligado ao Google Calendar');
+        if(!wasSilent) showToast('Ligado ao Google Calendar');
         render();
+        if(googleTrainingColorId){
+          importTreinosFromGoogleCalendar(GOOGLE_AUTO_IMPORT_DAYS, true);
+        }
       }
     });
     return true;
@@ -671,13 +680,25 @@
     render();
   }
 
-  function connectGoogleCalendar(){
-    if(!googleAuth.clientId){ showToast('Cola primeiro o Client ID'); return; }
+  function connectGoogleCalendar(silentAttempt){
+    if(!googleAuth.clientId){ if(!silentAttempt) showToast('Cola primeiro o Client ID'); return; }
     if(!googleAuth.tokenClient){
       const ok = setupGoogleTokenClient();
-      if(!ok){ showToast('A biblioteca do Google ainda não carregou. Tenta outra vez em alguns segundos.'); return; }
+      if(!ok){ if(!silentAttempt) showToast('A biblioteca do Google ainda não carregou. Tenta outra vez em alguns segundos.'); return; }
     }
-    googleAuth.tokenClient.requestAccessToken();
+    googleAuth._silentAttempt = !!silentAttempt;
+    googleAuth.tokenClient.requestAccessToken(silentAttempt ? { prompt: 'none' } : {});
+  }
+
+  function tryAutoConnectGoogle(attemptsLeft){
+    if(attemptsLeft === undefined) attemptsLeft = 20;
+    if(googleAuth.status === 'not-configured') return; // nunca configurado, nada a fazer
+    if(googleAuth.status === 'connected') return; // já ligado nesta sessão
+    if(typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2){
+      if(attemptsLeft > 0) setTimeout(() => tryAutoConnectGoogle(attemptsLeft - 1), 500);
+      return;
+    }
+    connectGoogleCalendar(true);
   }
 
   function disconnectGoogleCalendar(){
@@ -772,9 +793,9 @@
     return { client: null, tier: 'none' };
   }
 
-  async function importTreinosFromGoogleCalendar(days){
-    if(!googleAuth.token){ showToast('Liga primeiro ao Google Calendar'); return; }
-    if(!googleTrainingColorId){ showToast('Escolhe primeiro a cor que representa "treino dado" no cartão Google Calendar'); return; }
+  async function importTreinosFromGoogleCalendar(days, silent){
+    if(!googleAuth.token){ if(!silent) showToast('Liga primeiro ao Google Calendar'); return; }
+    if(!googleTrainingColorId){ if(!silent) showToast('Escolhe primeiro a cor que representa "treino dado" no cartão Google Calendar'); return; }
     try{
       const timeMin = new Date(Date.now() - days*86400000).toISOString();
       const timeMax = new Date().toISOString();
@@ -782,7 +803,7 @@
       const windowEnd = timeMax.slice(0,10);
       const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&singleEvents=true&orderBy=startTime&maxResults=2500`;
       const resp = await fetch(url, { headers: { 'Authorization': `Bearer ${googleAuth.token}` } });
-      if(!resp.ok){ showToast('Erro ao ler o Google Calendar'); return; }
+      if(!resp.ok){ if(!silent) showToast('Erro ao ler o Google Calendar'); return; }
       const data = await resp.json();
       const events = data.items || [];
       const eventsById = new Map(events.map(ev => [ev.id, ev]));
@@ -825,18 +846,21 @@
       });
 
       await saveData();
-      let msg = `${added} treino(s) importado(s)`;
-      if(atualizados) msg += `, ${atualizados} data(s) atualizada(s)`;
-      if(removidos) msg += `, ${removidos} removido(s) (evento apagado)`;
-      if(jaExistia) msg += `, ${jaExistia} já existiam`;
-      if(semCorrespondencia) msg += `, ${semCorrespondencia} sem cliente correspondente`;
-      if(ambiguo) msg += `, ${ambiguo} ambíguo(s)`;
-      if(corDiferente) msg += `, ${corDiferente} ignorado(s) por cor diferente`;
-      showToast(msg);
+      const houveMudanca = added > 0 || atualizados > 0 || removidos > 0;
+      if(!silent || houveMudanca){
+        let msg = `${added} treino(s) importado(s)`;
+        if(atualizados) msg += `, ${atualizados} data(s) atualizada(s)`;
+        if(removidos) msg += `, ${removidos} removido(s) (evento apagado)`;
+        if(jaExistia) msg += `, ${jaExistia} já existiam`;
+        if(semCorrespondencia) msg += `, ${semCorrespondencia} sem cliente correspondente`;
+        if(ambiguo) msg += `, ${ambiguo} ambíguo(s)`;
+        if(corDiferente) msg += `, ${corDiferente} ignorado(s) por cor diferente`;
+        showToast(msg);
+      }
       render();
     }catch(e){
       console.error('Erro a importar do Google Calendar', e);
-      showToast('Não foi possível importar do Google Calendar');
+      if(!silent) showToast('Não foi possível importar do Google Calendar');
     }
   }
 
@@ -1202,8 +1226,9 @@
       const done = cycleTrainedCount(c);
       const total = c.sessoesEsperadas;
       let stamps = '';
-      for(let i=0;i<total;i++){
-        stamps += `<div class="stamp ${i<done?'filled':''}"></div>`;
+      for(let i=0; i<Math.max(total,done); i++){
+        const cls = i<total ? (i<done?'filled':'') : 'extra';
+        stamps += `<div class="stamp ${cls}"></div>`;
       }
       const bdaySoon = daysToNextBirthday(c.nascimento) <= 7;
       const tipoCls = c.tipo === 'Externo' ? 'externo' : 'interno';
@@ -1411,6 +1436,7 @@
       <div class="card">
         <h3>Google Calendar</h3>
         <div class="sync-status sync-ok">● Ligado</div>
+        <p style="color:var(--text-muted);font-size:12px;margin:10px 0 0">A app tenta ligar-se sozinha e importar os treinos das últimas 12 semanas sempre que abres a app. O botão abaixo é só para forçar uma importação manual, por exemplo com mais dias para trás.</p>
         <button class="btn btn-primary" id="btnSyncAllGoogle" style="margin-top:12px">Sincronizar validades de todos os clientes</button>
 
         <label style="margin-top:16px">Cor que representa "treino dado" no Calendar</label>
@@ -1419,8 +1445,8 @@
         </select>
         <p style="color:var(--text-muted);font-size:12px;margin:8px 0 0">Marca com esta cor, no Google Calendar, qualquer evento que seja um treino real dado — de qualquer cliente. A importação só considera eventos com esta cor.</p>
 
-        <label style="margin-top:14px">Importar treinos dos últimos quantos dias?</label>
-        <input type="number" id="googleImportDays" value="60" min="1" max="365">
+        <label style="margin-top:14px">Importar manualmente dos últimos quantos dias?</label>
+        <input type="number" id="googleImportDays" value="84" min="1" max="365">
         <button class="btn btn-secondary" id="btnImportTreinosGoogle" style="margin-top:10px">Importar treinos do Google Calendar</button>
         <p style="color:var(--text-muted);font-size:12px;margin:10px 0 0">Entre os eventos com essa cor, procura o nome de um cliente já existente no título. Eventos ambíguos (o nome coincide com mais que um cliente) ou sem correspondência são ignorados. Nunca duplica um evento já importado.</p>
         <button class="btn btn-secondary" id="btnDisconnectGoogle" style="margin-top:12px">Desligar</button>
@@ -1525,8 +1551,12 @@
     const done = cycleTrainedCount(c);
     const total = c.sessoesEsperadas;
     let stampsLg = '';
-    for(let i=0;i<total;i++){
-      stampsLg += `<div class="stamp-lg ${i<done?'filled':''}">${i<done?'✓':''}</div>`;
+    for(let i=0; i<Math.max(total,done); i++){
+      if(i < total){
+        stampsLg += `<div class="stamp-lg ${i<done?'filled':''}">${i<done?'✓':''}</div>`;
+      } else {
+        stampsLg += `<div class="stamp-lg extra">✓</div>`;
+      }
     }
     const daysLeft = daysBetween(todayISO(), c.cicloValidade);
     const cadernetasHistorico = computeCadernetasHistorico(c);
@@ -2186,7 +2216,7 @@
   function escapeAttr(s){ return escapeHtml(s); }
 
   initGoogleAuth();
-  loadData();
+  loadData().then(() => tryAutoConnectGoogle());
 })();
 </script>
 </div>
