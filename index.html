@@ -1948,8 +1948,6 @@
     const search = root.querySelector('#searchInput');
     if(search){
       search.oninput = (e) => { state.search = e.target.value; renderListOnly(); };
-      search.focus();
-      search.setSelectionRange(search.value.length, search.value.length);
     }
 
     root.querySelectorAll('[data-filtertipo]').forEach(btn => {
