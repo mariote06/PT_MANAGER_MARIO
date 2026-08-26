@@ -532,11 +532,6 @@
   function inicioCaderneta(client){
     return client.inicioCadernetaAtual || addDays(client.cicloValidade, -28);
   }
-  // cicloValidade é internamente a sexta-feira de renovação; para mostrar ao utilizador
-  // usamos sempre o último dia realmente válido, a quinta-feira anterior.
-  function ultimoDiaValido(cicloValidadeIso){
-    return addDays(cicloValidadeIso, -1);
-  }
   function cycleTrainedCount(client){
     const inicio = inicioCaderneta(client);
     return (client.treinos||[]).filter(t => t.data >= inicio).length;
@@ -624,7 +619,7 @@
   };
   function formatChangeValue(campo, val){
     if(campo === 'cicloValidade'){
-      return val ? fmtDateShort(ultimoDiaValido(val)) : '—';
+      return val ? fmtDateShort(val) : '—';
     }
     if(campo === 'cicloInicio' || campo === 'nascimento' || campo === 'inicioCadernetaAtual' || campo === 'pagoAte'){
       return val ? fmtDateShort(val) : '—';
@@ -1224,7 +1219,7 @@
       .sort((a,b) => a.d - b.d);
 
     const expiring = state.clients
-      .map(c => ({c, d: daysBetween(today, ultimoDiaValido(c.cicloValidade))}))
+      .map(c => ({c, d: daysBetween(today, c.cicloValidade)}))
       .filter(x => x.d <= 14)
       .sort((a,b) => a.d - b.d);
 
@@ -1260,7 +1255,7 @@
           <div class="alert-card ${cls==='urgent'?'urgent':'soon'}" data-open="${c.id}">
             <div>
               <div class="name">${escapeHtml(c.nome)}</div>
-              <div class="meta">${done}/${c.sessoesEsperadas} treinos · válida até ${fmtDateShort(ultimoDiaValido(c.cicloValidade))}</div>
+              <div class="meta">${done}/${c.sessoesEsperadas} treinos · válida até ${fmtDateShort(c.cicloValidade)}</div>
             </div>
             <div class="tag ${cls==='urgent'?'urgent':'soon'}">${label}</div>
           </div>`;
@@ -1295,7 +1290,7 @@
         <div class="client-card status-${st}" data-open="${c.id}">
           <div class="row1">
             <div class="name">${escapeHtml(c.nome)}${bdaySoon?'<span class="badge-inline bday">🎂</span>':''}</div>
-            <div class="validade">até ${fmtDateShort(ultimoDiaValido(c.cicloValidade))}</div>
+            <div class="validade">até ${fmtDateShort(c.cicloValidade)}</div>
           </div>
           <div class="atividade">${escapeHtml(c.atividade || 'Sem atividade definida')} <span class="badge-tipo ${tipoCls}">${c.tipo}</span></div>
           <div class="stamps">${stamps}<span class="stamps-label">${done}/${total}</span></div>
@@ -1625,7 +1620,7 @@
         stampsLg += `<div class="stamp-lg extra">✓</div>`;
       }
     }
-    const daysLeft = daysBetween(todayISO(), ultimoDiaValido(c.cicloValidade));
+    const daysLeft = daysBetween(todayISO(), c.cicloValidade);
     const ultimoTreinoInfo = ultimoTreino(c);
     const cadernetasHistorico = computeCadernetasHistorico(c);
     const pagamentosOrdenados = (c.pagamentos||[]).slice().sort((a,b)=>b.data.localeCompare(a.data));
@@ -1658,7 +1653,7 @@
           <h3>Caderneta</h3>
           <div class="field-row"><span class="k">Início do Serviço</span><span class="v">${fmtDateShort(c.cicloInicio)}</span></div>
           <div class="field-row"><span class="k">Início da Caderneta</span><span class="v">${fmtDateShort(inicioCaderneta(c))}</span></div>
-          <div class="field-row"><span class="k">Válida até</span><span class="v">${fmtDateShort(ultimoDiaValido(c.cicloValidade))}</span></div>
+          <div class="field-row"><span class="k">Válida até</span><span class="v">${fmtDateShort(c.cicloValidade)}</span></div>
           <div class="field-row"><span class="k">Dias restantes</span><span class="v">${daysLeft<0?`expirou há ${Math.abs(daysLeft)}d`:daysLeft+'d'}</span></div>
           <div class="field-row"><span class="k">Sessões esperadas</span><span class="v">${total}</span></div>
           <div class="field-row"><span class="k">Último treino</span><span class="v">${ultimoTreinoInfo ? `${fmtDateShort(ultimoTreinoInfo.data)}${ultimoTreinoInfo.hora?` às ${ultimoTreinoInfo.hora}`:''}` : '—'}</span></div>
@@ -1775,8 +1770,8 @@
           <input type="date" id="f_inicioCaderneta" value="${inicioCaderneta(c)||''}">
           <p style="color:var(--text-muted);font-size:12px;margin:8px 0 0">A data a partir da qual os treinos contam para a caderneta em curso. Atualiza-se sozinha a cada renovação, mas podes corrigi-la manualmente se precisares.</p>
 
-          <label>Último dia válido (quinta-feira)</label>
-          <input type="date" id="f_validade" value="${c.cicloValidade ? ultimoDiaValido(c.cicloValidade) : ''}">
+          <label>Validade da caderneta</label>
+          <input type="date" id="f_validade" value="${c.cicloValidade||''}">
         </div>
 
         <div class="card">
@@ -1900,7 +1895,7 @@
       return `
         <div class="modal-sheet">
           <h3>Renovar caderneta</h3>
-          <p>Novo ciclo de 4 semanas para ${escapeHtml(c.nome)}: de ${fmtDateShort(newInicio)} até ${fmtDateShort(ultimoDiaValido(newValidade))}. O contador de treinos reinicia.</p>
+          <p>Novo ciclo de 4 semanas para ${escapeHtml(c.nome)}: de ${fmtDateShort(newInicio)} até ${fmtDateShort(newValidade)}. O contador de treinos reinicia.</p>
           <div class="btn-row">
             <button class="btn btn-secondary" id="modalCancel">Cancelar</button>
             <button class="btn btn-primary" id="modalConfirmRenovar">Confirmar renovação</button>
@@ -2148,8 +2143,8 @@
         atividade: ov.querySelector('#f_atividade').value.trim(),
         sessoesEsperadas: parseInt(ov.querySelector('#f_sessoes').value) || 4,
         cicloInicio: ov.querySelector('#f_inicio').value || todayISO(),
-        cicloValidade: addDays(ov.querySelector('#f_validade').value || addDays(todayISO(),27), 1),
-        inicioCadernetaAtual: ov.querySelector('#f_inicioCaderneta').value || addDays(ov.querySelector('#f_validade').value || todayISO(), -27),
+        cicloValidade: ov.querySelector('#f_validade').value || addDays(todayISO(),28),
+        inicioCadernetaAtual: ov.querySelector('#f_inicioCaderneta').value || addDays(ov.querySelector('#f_validade').value || todayISO(), -28),
         tipo: ov.querySelector('#f_tipo').value,
         servico: ov.querySelector('#f_servico').value,
         valorCaderneta: parseFloat(ov.querySelector('#f_valorCaderneta').value) || 0,
