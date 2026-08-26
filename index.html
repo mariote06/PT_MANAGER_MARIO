@@ -1311,7 +1311,7 @@
       renewalDates.forEach(renewalDate => {
         const cadernetaStart = addDays(renewalDate, -28);
         (c.treinos||[]).forEach(t => {
-          if(t.data >= cadernetaStart && t.data < renewalDate) all.push({c, t});
+          if(t.data > cadernetaStart && t.data <= renewalDate) all.push({c, t});
         });
       });
     });
