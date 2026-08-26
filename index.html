@@ -123,6 +123,9 @@
   #pt-app-root .client-card.status-expired { border-left-color: var(--coral); }
   #pt-app-root .client-card .row1 { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
   #pt-app-root .client-card .name { font-weight: 700; font-size: 15.5px; }
+  #pt-app-root .client-code {
+    font-family: ui-monospace, monospace; font-size: 12px; font-weight: 600; color: var(--text-dim);
+  }
   #pt-app-root .client-card .validade { font-size: 11.5px; color: var(--text-muted); font-family: ui-monospace, monospace; white-space: nowrap; }
   #pt-app-root .client-card .atividade { color: var(--text-muted); font-size: 13px; margin-top: 3px; }
   #pt-app-root .stamps { display: flex; gap: 4px; margin-top: 10px; flex-wrap: wrap; }
@@ -1268,7 +1271,7 @@
   function renderList(){
     const q = state.search.trim().toLowerCase();
     let list = state.clients.slice().sort((a,b) => a.nome.localeCompare(b.nome));
-    if(q) list = list.filter(c => c.nome.toLowerCase().includes(q));
+    if(q) list = list.filter(c => c.nome.toLowerCase().includes(q) || String(c.id).toLowerCase().includes(q));
     if(state.filterTipo !== 'all') list = list.filter(c => c.tipo === state.filterTipo);
 
     if(list.length === 0){
@@ -1289,7 +1292,7 @@
       return `
         <div class="client-card status-${st}" data-open="${c.id}">
           <div class="row1">
-            <div class="name">${escapeHtml(c.nome)}${bdaySoon?'<span class="badge-inline bday">🎂</span>':''}</div>
+            <div class="name"><span class="client-code">#${escapeHtml(c.id)}</span> ${escapeHtml(c.nome)}${bdaySoon?'<span class="badge-inline bday">🎂</span>':''}</div>
             <div class="validade">até ${fmtDateShort(c.cicloValidade)}</div>
           </div>
           <div class="atividade">${escapeHtml(c.atividade || 'Sem atividade definida')} <span class="badge-tipo ${tipoCls}">${c.tipo}</span></div>
