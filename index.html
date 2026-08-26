@@ -488,6 +488,44 @@
     return dates;
   }
 
+  // Datas de validade realmente conhecidas no passado (a partir do histórico de alterações),
+  // evitando "inventar" renovações fantasma quando já houve prolongamentos irregulares.
+  function getKnownValidadeHistory(client){
+    const set = new Set();
+    (client.historico||[]).forEach(h => {
+      const isRenovacao = h.label && h.label.startsWith('Renovação');
+      (h.changes||[]).forEach(ch => {
+        if(ch.campo === 'cicloValidade'){
+          if(ch.depois) set.add(ch.depois); // é sempre real: a validade resultante desta ação
+          // o valor "antes" só é uma renovação real se esta ação for uma Renovação;
+          // se for um Prolongamento, o "antes" foi substituído e nunca chegou a acontecer
+          if(ch.antes && isRenovacao) set.add(ch.antes);
+        }
+      });
+    });
+    if(client.cicloValidade) set.add(client.cicloValidade);
+    return Array.from(set).sort();
+  }
+
+  // Combina datas reais conhecidas (histórico) com extrapolação segura só para a frente
+  // (a partir da validade atual — nunca para trás, onde prolongamentos passados quebrariam a grelha de 28 dias).
+  function renewalDatesInMonthForClient(client, monthStartIso, monthEndIso){
+    const results = new Set();
+    getKnownValidadeHistory(client).forEach(d => {
+      if(d >= monthStartIso && d <= monthEndIso) results.add(d);
+    });
+    if(client.cicloValidade){
+      let d = client.cicloValidade;
+      let guard = 0;
+      while(d <= monthEndIso && guard < 1000){
+        if(d >= monthStartIso) results.add(d);
+        d = addDays(d, 28);
+        guard++;
+      }
+    }
+    return Array.from(results).sort();
+  }
+
   function todayISO(){
     const d = new Date();
     return d.toISOString().slice(0,10);
@@ -1309,12 +1347,12 @@
     const [start, end] = monthRange(key);
     let all = [];
     state.clients.forEach(c => {
-      const renewalDates = renewalDatesInMonth(c.cicloValidade, start, end);
-      renewalDates.forEach(renewalDate => {
-        const cadernetaStart = addDays(renewalDate, -28);
-        (c.treinos||[]).forEach(t => {
-          if(t.data > cadernetaStart && t.data <= renewalDate) all.push({c, t});
-        });
+      const renewalDates = renewalDatesInMonthForClient(c, start, end);
+      renewalDates.forEach(() => {
+        const sessoes = c.sessoesEsperadas || 0;
+        for(let i = 0; i < sessoes; i++){
+          all.push({ c });
+        }
       });
     });
     const interno = all.filter(x => x.c.tipo !== 'Externo');
@@ -1342,7 +1380,7 @@
     const [start,end] = monthRange(key);
     let rows = [];
     state.clients.forEach(c => {
-      let dates = renewalDatesInMonth(c.cicloValidade, start, end);
+      let dates = renewalDatesInMonthForClient(c, start, end);
       if(c.pagoAte){
         dates = dates.filter(d => d > c.pagoAte); // já pago adiantado até esta data: não conta como receita nova
       }
@@ -1570,7 +1608,7 @@
     return `
       <div class="card">
         <h3>Resumo do mês</h3>
-        <div class="field-row"><span class="k">Total de treinos</span><span class="v">${s.total}</span></div>
+        <div class="field-row"><span class="k">Total de sessões</span><span class="v">${s.total}</span></div>
         <div class="field-row"><span class="k">Interno</span><span class="v">${s.internoCount}</span></div>
         <div class="field-row"><span class="k">Externo</span><span class="v">${s.externoCount}</span></div>
         <div class="field-row"><span class="k">Patamar comissão</span><span class="v">${s.patamar==='alto'?`≥ ${PATAMAR_INTERNO} (majorada)`:`&lt; ${PATAMAR_INTERNO}`}</span></div>
@@ -1579,12 +1617,12 @@
         <h3>Comissão estimada</h3>
         <div class="field-row"><span class="k">A receber do ginásio (interno)</span><span class="v">${s.comissaoInterno.toFixed(2)}€</span></div>
         <div class="field-row"><span class="k">A pagar ao ginásio (externo)</span><span class="v">${s.comissaoExterno.toFixed(2)}€</span></div>
-        ${s.isentos>0 ? `<div class="field-row"><span class="k">Treinos isentos (&gt;${ISENCAO_EXTERNO}/mês)</span><span class="v">${s.isentos}</span></div>` : ''}
+        ${s.isentos>0 ? `<div class="field-row"><span class="k">Sessões isentas (&gt;${ISENCAO_EXTERNO}/mês)</span><span class="v">${s.isentos}</span></div>` : ''}
         <div class="field-row" style="border-top:1px solid var(--line);margin-top:4px;padding-top:10px">
           <span class="k"><strong>Saldo estimado</strong></span><span class="v"><strong>${(s.comissaoInterno - s.comissaoExterno).toFixed(2)}€</strong></span>
         </div>
       </div>
-      <div class="empty-state" style="text-align:left">Conta os treinos das cadernetas cuja renovação (sexta-feira) caiu neste mês — não os treinos por data de calendário. Comissão calculada com base na tabela de 2026: patamar interno &lt; 80 / ≥ 80 treinos combinados por mês; treinos externos acima de ${ISENCAO_EXTERNO}/mês ficam isentos de comissão, começando pelos de menor valor.</div>
+      <div class="empty-state" style="text-align:left">Conta as sessões compradas em cada renovação de caderneta (sexta-feira) que caiu neste mês — as sessões esperadas do pacote, não os treinos realmente dados. Comissão calculada com base na tabela de 2026: patamar interno &lt; 80 / ≥ 80 sessões combinadas por mês; sessões externas acima de ${ISENCAO_EXTERNO}/mês ficam isentas de comissão, começando pelas de menor valor.</div>
     `;
   }
 
