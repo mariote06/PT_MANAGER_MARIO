@@ -537,7 +537,9 @@
   }
   function cycleTrainedCount(client){
     const inicio = inicioCaderneta(client);
-    return (client.treinos||[]).filter(t => t.data >= inicio).length;
+    // O dia de início é a sexta-feira em que a caderneta anterior caducou/renovou;
+    // um treino marcado exatamente nesse dia pertence à caderneta anterior, não a esta.
+    return (client.treinos||[]).filter(t => t.data > inicio).length;
   }
   function ultimoTreino(client){
     const treinos = client.treinos || [];
