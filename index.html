@@ -492,17 +492,23 @@
   // evitando "inventar" renovações fantasma quando já houve prolongamentos irregulares.
   function getKnownValidadeHistory(client){
     const set = new Set();
-    (client.historico||[]).forEach(h => {
-      const isRenovacao = h.label && h.label.startsWith('Renovação');
+    const hist = client.historico || [];
+    hist.forEach(h => {
       (h.changes||[]).forEach(ch => {
-        if(ch.campo === 'cicloValidade'){
-          if(ch.depois) set.add(ch.depois); // é sempre real: a validade resultante desta ação
-          // o valor "antes" só é uma renovação real se esta ação for uma Renovação;
-          // se for um Prolongamento, o "antes" foi substituído e nunca chegou a acontecer
-          if(ch.antes && isRenovacao) set.add(ch.antes);
-        }
+        // "depois" é sempre real: é a validade que ficou a valer depois desta ação.
+        if(ch.campo === 'cicloValidade' && ch.depois) set.add(ch.depois);
       });
     });
+    // O "antes" da entrada mais ANTIGA (última do array, já que novas entradas entram
+    // no início) representa o valor original antes de qualquer alteração alguma vez
+    // ter sido registada — esse é sempre legítimo. Nas entradas mais recentes, o "antes"
+    // pode ser residual de testes/edições corrigidas depois, por isso não entra.
+    if(hist.length > 0){
+      const oldest = hist[hist.length - 1];
+      (oldest.changes||[]).forEach(ch => {
+        if(ch.campo === 'cicloValidade' && ch.antes) set.add(ch.antes);
+      });
+    }
     if(client.cicloValidade) set.add(client.cicloValidade);
     return Array.from(set).sort();
   }
@@ -530,14 +536,18 @@
   // Um Prolongamento nunca mexe em inicioCadernetaAtual, por isso todos os valores logados são reais.
   function getKnownInicioCadernetaHistory(client){
     const set = new Set();
-    (client.historico||[]).forEach(h => {
+    const hist = client.historico || [];
+    hist.forEach(h => {
       (h.changes||[]).forEach(ch => {
-        if(ch.campo === 'inicioCadernetaAtual'){
-          if(ch.depois) set.add(ch.depois);
-          if(ch.antes) set.add(ch.antes);
-        }
+        if(ch.campo === 'inicioCadernetaAtual' && ch.depois) set.add(ch.depois);
       });
     });
+    if(hist.length > 0){
+      const oldest = hist[hist.length - 1];
+      (oldest.changes||[]).forEach(ch => {
+        if(ch.campo === 'inicioCadernetaAtual' && ch.antes) set.add(ch.antes);
+      });
+    }
     if(client.inicioCadernetaAtual) set.add(client.inicioCadernetaAtual);
     return Array.from(set).sort();
   }
