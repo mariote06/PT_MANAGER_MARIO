@@ -492,24 +492,22 @@
   // evitando "inventar" renovações fantasma quando já houve prolongamentos irregulares.
   function getKnownValidadeHistory(client){
     const set = new Set();
-    const hist = client.historico || [];
-    hist.forEach(h => {
+    const anchor = client.cicloValidade;
+    if(anchor) set.add(anchor);
+    (client.historico||[]).forEach(h => {
       (h.changes||[]).forEach(ch => {
-        // "depois" é sempre real: é a validade que ficou a valer depois desta ação.
-        if(ch.campo === 'cicloValidade' && ch.depois) set.add(ch.depois);
+        // Só entra se estiver a um múltiplo exato de 28 dias da validade atual — é a
+        // única forma matematicamente garantida de distinguir uma renovação real de
+        // ruído deixado por testes/edições/correções ao longo do tempo, já que
+        // cadernetas reais estão sempre a exatamente 4 semanas umas das outras.
+        // Verifica-se tanto "depois" como "antes": um prolongamento tem "antes" fora
+        // da grelha (nunca chegou a acontecer) e é corretamente excluído; uma renovação
+        // real tem sempre os dois alinhados.
+        if(ch.campo !== 'cicloValidade' || !anchor) return;
+        if(ch.depois && daysBetween(ch.depois, anchor) % 28 === 0) set.add(ch.depois);
+        if(ch.antes && daysBetween(ch.antes, anchor) % 28 === 0) set.add(ch.antes);
       });
     });
-    // O "antes" da entrada mais ANTIGA (última do array, já que novas entradas entram
-    // no início) representa o valor original antes de qualquer alteração alguma vez
-    // ter sido registada — esse é sempre legítimo. Nas entradas mais recentes, o "antes"
-    // pode ser residual de testes/edições corrigidas depois, por isso não entra.
-    if(hist.length > 0){
-      const oldest = hist[hist.length - 1];
-      (oldest.changes||[]).forEach(ch => {
-        if(ch.campo === 'cicloValidade' && ch.antes) set.add(ch.antes);
-      });
-    }
-    if(client.cicloValidade) set.add(client.cicloValidade);
     return Array.from(set).sort();
   }
 
@@ -533,22 +531,17 @@
   }
 
   // Mesma lógica, mas para a data de INÍCIO de cada caderneta (não a validade/fim).
-  // Um Prolongamento nunca mexe em inicioCadernetaAtual, por isso todos os valores logados são reais.
   function getKnownInicioCadernetaHistory(client){
     const set = new Set();
-    const hist = client.historico || [];
-    hist.forEach(h => {
+    const anchor = client.inicioCadernetaAtual;
+    if(anchor) set.add(anchor);
+    (client.historico||[]).forEach(h => {
       (h.changes||[]).forEach(ch => {
-        if(ch.campo === 'inicioCadernetaAtual' && ch.depois) set.add(ch.depois);
+        if(ch.campo !== 'inicioCadernetaAtual' || !anchor) return;
+        if(ch.depois && daysBetween(ch.depois, anchor) % 28 === 0) set.add(ch.depois);
+        if(ch.antes && daysBetween(ch.antes, anchor) % 28 === 0) set.add(ch.antes);
       });
     });
-    if(hist.length > 0){
-      const oldest = hist[hist.length - 1];
-      (oldest.changes||[]).forEach(ch => {
-        if(ch.campo === 'inicioCadernetaAtual' && ch.antes) set.add(ch.antes);
-      });
-    }
-    if(client.inicioCadernetaAtual) set.add(client.inicioCadernetaAtual);
     return Array.from(set).sort();
   }
 
@@ -1540,12 +1533,12 @@
     const [start,end] = monthRange(key);
     let rows = [];
     state.clients.forEach(c => {
-      let dates = renewalDatesInMonthForClient(c, start, end);
+      let dates = cadernetaStartDatesInMonthForClient(c, start, end);
       if(c.pagoAte){
         dates = dates.filter(d => d > c.pagoAte); // já pago adiantado até esta data: não conta como receita nova
       }
       if(dates.length > 0){
-        rows.push({ c, count: dates.length, valor: dates.length * Number(c.valorCaderneta||0) });
+        rows.push({ c, count: dates.length, dates, valor: dates.length * Number(c.valorCaderneta||0) });
       }
     });
     rows.sort((a,b) => b.valor - a.valor);
@@ -1846,7 +1839,7 @@
     const rowsHtml = d.rows.length === 0 ? `<div class="empty-state">Sem renovações de caderneta previstas para este mês.</div>` :
       d.rows.map(r => `
         <div class="list-item">
-          <span>${escapeHtml(r.c.nome)} ${r.count>1?`<span class="badge-inline bday">🔁 x${r.count}</span>`:''}</span>
+          <span><span class="mono" style="color:var(--text-dim);font-size:11.5px">${r.dates.map(dt=>fmtDateShort(dt)).join(' + ')}</span> ${escapeHtml(r.c.nome)}${r.count>1?` <span class="badge-inline bday">🔁 x${r.count}</span>`:''}</span>
           <span class="mono">${r.valor.toFixed(2)}€</span>
         </div>
       `).join('');
