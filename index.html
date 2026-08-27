@@ -850,10 +850,26 @@
 
   function escapeRegex(s){ return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
+  function twoWordPrefix(nome){
+    const words = (nome||'').trim().split(/\s+/);
+    if(words.length < 2) return null;
+    return normHeader(words[0] + ' ' + words[1]);
+  }
+
   function matchByNameAmong(candidates, norm){
     const fullMatches = candidates.filter(c => norm.includes(normHeader(c.nome)));
     if(fullMatches.length === 1) return fullMatches[0];
     if(fullMatches.length > 1) return null;
+
+    // Nível intermédio: "primeiro nome + segundo nome" (ex: "José Rui") — mais específico
+    // que só o primeiro nome, útil quando há vários clientes com o mesmo primeiro nome.
+    const twoWordMatches = candidates.filter(c => {
+      const prefix = twoWordPrefix(c.nome);
+      return prefix && norm.includes(prefix);
+    });
+    if(twoWordMatches.length === 1) return twoWordMatches[0];
+    if(twoWordMatches.length > 1) return null;
+
     const firstNameMatches = candidates.filter(c => {
       const firstName = normHeader((c.nome||'').split(' ')[0]);
       if(!firstName) return false;
@@ -878,12 +894,16 @@
     const byName = matchByNameAmong(state.clients, norm);
     if(byName) return { client: byName, tier: 'nome' };
     const anyFullNameHit = state.clients.some(c => norm.includes(normHeader(c.nome)));
+    const anyTwoWordHit = state.clients.some(c => {
+      const prefix = twoWordPrefix(c.nome);
+      return prefix && norm.includes(prefix);
+    });
     const anyFirstNameHit = state.clients.some(c => {
       const firstName = normHeader((c.nome||'').split(' ')[0]);
       if(!firstName) return false;
       return new RegExp(`\\b${escapeRegex(firstName)}\\b`).test(norm);
     });
-    if(anyFullNameHit || anyFirstNameHit) return { client: null, tier: 'ambiguous' };
+    if(anyFullNameHit || anyTwoWordHit || anyFirstNameHit) return { client: null, tier: 'ambiguous' };
     return { client: null, tier: 'none' };
   }
 
