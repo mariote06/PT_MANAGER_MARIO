@@ -1550,7 +1550,7 @@
         rows.push({ c, count: dates.length, dates, valor: dates.length * Number(c.valorCaderneta||0) });
       }
     });
-    rows.sort((a,b) => b.valor - a.valor);
+    rows.sort((a,b) => a.dates[0].localeCompare(b.dates[0]));
     const totalInterno = rows.filter(r => r.c.tipo !== 'Externo').reduce((s,r)=>s+r.valor,0);
     const totalExterno = rows.filter(r => r.c.tipo === 'Externo').reduce((s,r)=>s+r.valor,0);
     return { rows, totalInterno, totalExterno, total: totalInterno + totalExterno };
