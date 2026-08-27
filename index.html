@@ -969,10 +969,14 @@
 
   function escapeRegex(s){ return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
-  function twoWordPrefix(nome){
-    const words = (nome||'').trim().split(/\s+/);
-    if(words.length < 2) return null;
-    return normHeader(words[0] + ' ' + words[1]);
+  function nameCombos(nome){
+    const words = (nome||'').trim().split(/\s+/).filter(Boolean);
+    const combos = new Set();
+    if(words.length >= 2){
+      combos.add(normHeader(words[0] + ' ' + words[1])); // primeiro + segundo nome
+      combos.add(normHeader(words[0] + ' ' + words[words.length-1])); // primeiro nome + apelido
+    }
+    return Array.from(combos);
   }
 
   function matchByNameAmong(candidates, norm){
@@ -980,14 +984,12 @@
     if(fullMatches.length === 1) return fullMatches[0];
     if(fullMatches.length > 1) return null;
 
-    // Nível intermédio: "primeiro nome + segundo nome" (ex: "José Rui") — mais específico
-    // que só o primeiro nome, útil quando há vários clientes com o mesmo primeiro nome.
-    const twoWordMatches = candidates.filter(c => {
-      const prefix = twoWordPrefix(c.nome);
-      return prefix && norm.includes(prefix);
-    });
-    if(twoWordMatches.length === 1) return twoWordMatches[0];
-    if(twoWordMatches.length > 1) return null;
+    // Nível intermédio: "primeiro nome + segundo nome" ou "primeiro nome + apelido"
+    // (ex: "José Rui" ou "Maria Chorado") — mais específico que só o primeiro nome,
+    // útil quando há vários clientes com o mesmo primeiro nome.
+    const comboMatches = candidates.filter(c => nameCombos(c.nome).some(combo => norm.includes(combo)));
+    if(comboMatches.length === 1) return comboMatches[0];
+    if(comboMatches.length > 1) return null;
 
     const firstNameMatches = candidates.filter(c => {
       const firstName = normHeader((c.nome||'').split(' ')[0]);
@@ -1013,16 +1015,13 @@
     const byName = matchByNameAmong(state.clients, norm);
     if(byName) return { client: byName, tier: 'nome' };
     const anyFullNameHit = state.clients.some(c => norm.includes(normHeader(c.nome)));
-    const anyTwoWordHit = state.clients.some(c => {
-      const prefix = twoWordPrefix(c.nome);
-      return prefix && norm.includes(prefix);
-    });
+    const anyComboHit = state.clients.some(c => nameCombos(c.nome).some(combo => norm.includes(combo)));
     const anyFirstNameHit = state.clients.some(c => {
       const firstName = normHeader((c.nome||'').split(' ')[0]);
       if(!firstName) return false;
       return new RegExp(`\\b${escapeRegex(firstName)}\\b`).test(norm);
     });
-    if(anyFullNameHit || anyTwoWordHit || anyFirstNameHit) return { client: null, tier: 'ambiguous' };
+    if(anyFullNameHit || anyComboHit || anyFirstNameHit) return { client: null, tier: 'ambiguous' };
     return { client: null, tier: 'none' };
   }
 
