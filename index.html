@@ -457,6 +457,15 @@
   }
 
   function monthKey(iso){ return iso ? iso.slice(0,7) : ''; }
+  // Constrói "AAAA-MM-DD" a partir da hora LOCAL do dispositivo, nunca via toISOString()
+  // (que converte para UTC e pode fazer recuar um dia inteiro em fusos horários como
+  // o de Portugal no verão, UTC+1 — foi a causa de várias datas a aparecerem trocadas).
+  function toIsoLocal(d){
+    const y = d.getFullYear();
+    const m = String(d.getMonth()+1).padStart(2,'0');
+    const day = String(d.getDate()).padStart(2,'0');
+    return `${y}-${m}-${day}`;
+  }
   function monthLabel(key){
     const [y,m] = key.split('-').map(Number);
     return `${MON_FULL[m-1]} ${y}`;
@@ -465,7 +474,7 @@
     const [y,m] = key.split('-').map(Number);
     const start = new Date(y, m-1, 1);
     const end = new Date(y, m, 0);
-    return [start.toISOString().slice(0,10), end.toISOString().slice(0,10)];
+    return [toIsoLocal(start), toIsoLocal(end)];
   }
   function addMonths(key, n){
     const [y,m] = key.split('-').map(Number);
@@ -483,7 +492,7 @@
     for(let k = k0-1; k <= k0+2; k++){
       const d = new Date(anchor);
       d.setDate(d.getDate() + k*28);
-      if(d >= start && d <= end) dates.push(d.toISOString().slice(0,10));
+      if(d >= start && d <= end) dates.push(toIsoLocal(d));
     }
     return dates;
   }
@@ -564,7 +573,7 @@
 
   function todayISO(){
     const d = new Date();
-    return d.toISOString().slice(0,10);
+    return toIsoLocal(d);
   }
   function parseDate(iso){
     if(!iso) return null;
@@ -584,7 +593,7 @@
   function addDays(iso, n){
     const d = parseDate(iso);
     d.setDate(d.getDate()+n);
-    return d.toISOString().slice(0,10);
+    return toIsoLocal(d);
   }
   function daysBetween(fromIso, toIso){
     const a = parseDate(fromIso), b = parseDate(toIso);
