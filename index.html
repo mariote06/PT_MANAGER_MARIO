@@ -526,6 +526,39 @@
     return Array.from(results).sort();
   }
 
+  // Mesma lógica, mas para a data de INÍCIO de cada caderneta (não a validade/fim).
+  // Um Prolongamento nunca mexe em inicioCadernetaAtual, por isso todos os valores logados são reais.
+  function getKnownInicioCadernetaHistory(client){
+    const set = new Set();
+    (client.historico||[]).forEach(h => {
+      (h.changes||[]).forEach(ch => {
+        if(ch.campo === 'inicioCadernetaAtual'){
+          if(ch.depois) set.add(ch.depois);
+          if(ch.antes) set.add(ch.antes);
+        }
+      });
+    });
+    if(client.inicioCadernetaAtual) set.add(client.inicioCadernetaAtual);
+    return Array.from(set).sort();
+  }
+
+  function cadernetaStartDatesInMonthForClient(client, monthStartIso, monthEndIso){
+    const results = new Set();
+    getKnownInicioCadernetaHistory(client).forEach(d => {
+      if(d >= monthStartIso && d <= monthEndIso) results.add(d);
+    });
+    if(client.inicioCadernetaAtual){
+      let d = client.inicioCadernetaAtual;
+      let guard = 0;
+      while(d <= monthEndIso && guard < 1000){
+        if(d >= monthStartIso) results.add(d);
+        d = addDays(d, 28);
+        guard++;
+      }
+    }
+    return Array.from(results).sort();
+  }
+
   function todayISO(){
     const d = new Date();
     return d.toISOString().slice(0,10);
@@ -650,6 +683,7 @@
     if(c.corGoogle === undefined) c.corGoogle = '';
     if(c.pagoAte === undefined) c.pagoAte = '';
     if(c.inicioCadernetaAtual === undefined) c.inicioCadernetaAtual = addDays(c.cicloValidade, -28);
+    if(c.autoRenovar === undefined) c.autoRenovar = false;
     return c;
   }
 
@@ -702,6 +736,91 @@
     entry.changes.forEach(ch => { client[ch.campo] = ch.antes; });
     client.historico.splice(idx, 1);
     return true;
+  }
+
+  // Renovação automática: qualquer caderneta cuja validade já tenha passado avança sozinha
+  // +4 semanas (pode repetir várias vezes se tiverem passado vários ciclos sem abrir a app).
+  // Cada passo fica registado no histórico como "Renovação automática", por isso pode
+  // ser desfeito manualmente como qualquer outra alteração.
+  // Renova UM cliente enquanto a validade estiver no passado (pode avançar vários ciclos de
+  // uma vez se tiver ficado muito tempo sem renovar). Só é chamada por ação explícita do utilizador
+  // (botão individual, ou "Renovar todas as expiradas" na notificação) — nunca sozinha ao abrir a app.
+  function renewClientIfOverdue(c){
+    let anyChange = false;
+    const today = todayISO();
+    let guard = 0;
+    while(c.cicloValidade && today > c.cicloValidade && guard < 52){
+      const antesInicioCaderneta = inicioCaderneta(c);
+      const antesValidade = c.cicloValidade;
+      const novoInicioCaderneta = c.cicloValidade;
+      const novaValidade = addDays(novoInicioCaderneta, 28);
+      logChange(c, 'Renovação (+4 sem.)', [
+        { campo: 'inicioCadernetaAtual', rotulo: 'Início da Caderneta', antes: antesInicioCaderneta, depois: novoInicioCaderneta },
+        { campo: 'cicloValidade', rotulo: 'Validade', antes: antesValidade, depois: novaValidade }
+      ]);
+      c.inicioCadernetaAtual = novoInicioCaderneta;
+      c.cicloValidade = novaValidade;
+      anyChange = true;
+      guard++;
+    }
+    return anyChange;
+  }
+
+  async function renewAllExpiredClients(clientIds){
+    let anyChange = false;
+    state.clients.forEach(c => {
+      if(clientIds && !clientIds.includes(c.id)) return;
+      if(renewClientIfOverdue(c)) anyChange = true;
+    });
+    if(anyChange) await saveData();
+    return anyChange;
+  }
+
+  // Calcula cadernetas expiradas e a expirar dentro de 1 semana, para a notificação ao abrir a app.
+  function computeCadernetasAlertas(){
+    const today = todayISO();
+    const expiradas = [];
+    const expirando3Semanas = [];
+    state.clients.forEach(c => {
+      if(!c.cicloValidade) return;
+      if(c.cicloValidade < today){
+        expiradas.push(c);
+      } else {
+        const dias = daysBetween(today, c.cicloValidade);
+        if(dias <= 7) expirando3Semanas.push({ c, dias });
+      }
+    });
+    expirando3Semanas.sort((a,b) => a.dias - b.dias);
+    return { expiradas, expirando3Semanas };
+  }
+
+  // Processa silenciosamente os clientes marcados com "autoRenovar" cuja validade já passou.
+  // O sinalizador é reposto a false depois de usado, para pedir confirmação de novo no ciclo seguinte.
+  async function processAutoRenovarMarcados(){
+    const today = todayISO();
+    let anyChange = false;
+    state.clients.forEach(c => {
+      if(c.autoRenovar && c.cicloValidade && c.cicloValidade < today){
+        if(renewClientIfOverdue(c)){
+          c.autoRenovar = false;
+          anyChange = true;
+        }
+      }
+    });
+    if(anyChange) await saveData();
+    return anyChange;
+  }
+
+  async function checkCadernetasNotification(){
+    await processAutoRenovarMarcados();
+    const { expiradas, expirando3Semanas } = computeCadernetasAlertas();
+    if(expiradas.length === 0 && expirando3Semanas.length === 0) return;
+    state.modal = {
+      type: 'notificacaoCadernetas',
+      expiradasIds: expiradas.map(c => c.id),
+      expirandoIds: expirando3Semanas.map(x => x.c.id)
+    };
+    showModal();
   }
 
   // ---------- GOOGLE CALENDAR ----------
@@ -1163,11 +1282,13 @@
     const before = JSON.stringify(state.clients);
     state.clients = state.clients.map(migrateClient);
     if(JSON.stringify(state.clients) !== before) needsSave = true;
+
     if(needsSave) await saveData();
 
     state.financeMonth = monthKey(todayISO());
     state.loaded = true;
     render();
+    checkCadernetasNotification();
   }
   let saveTimer = null;
   async function saveData(){
@@ -1367,7 +1488,7 @@
     const [start, end] = monthRange(key);
     let all = [];
     state.clients.forEach(c => {
-      const renewalDates = renewalDatesInMonthForClient(c, start, end);
+      const renewalDates = cadernetaStartDatesInMonthForClient(c, start, end);
       renewalDates.forEach(() => {
         const sessoes = c.sessoesEsperadas || 0;
         for(let i = 0; i < sessoes; i++){
@@ -1987,6 +2108,43 @@
 
   function renderModal(modal){
     const c = getClient(modal.id);
+    if(modal.type === 'notificacaoCadernetas'){
+      const expiradas = (modal.expiradasIds||[]).map(id => getClient(id)).filter(Boolean);
+      const expirando = (modal.expirandoIds||[]).map(id => getClient(id)).filter(Boolean);
+      return `
+        <div class="modal-sheet">
+          <h3>Cadernetas a acompanhar</h3>
+          ${expiradas.length > 0 ? `
+            <p style="color:var(--coral);font-weight:700;margin:0 0 6px">Expiradas (${expiradas.length})</p>
+            ${expiradas.map(cl => `
+              <div class="list-item">
+                <span>${escapeHtml(cl.nome)}</span>
+                <span class="mono" style="color:var(--coral)">${fmtDateShort(cl.cicloValidade)}</span>
+              </div>
+            `).join('')}
+          ` : ''}
+          ${expirando.length > 0 ? `
+            <p style="color:var(--amber);font-weight:700;margin:16px 0 6px">A expirar na próxima semana (${expirando.length})</p>
+            ${expirando.map(cl => `
+              <div class="list-item">
+                <span>${escapeHtml(cl.nome)}</span>
+                <span style="display:flex;align-items:center;gap:8px">
+                  <span class="mono" style="color:var(--amber)">${fmtDateShort(cl.cicloValidade)}</span>
+                  ${cl.autoRenovar
+                    ? `<span class="badge-inline bday">✓ agendada</span>`
+                    : `<button class="btn btn-secondary" data-marcar-renovar="${cl.id}" style="width:auto;padding:5px 12px;font-size:11.5px;margin-top:0">Renovar</button>`
+                  }
+                </span>
+              </div>
+            `).join('')}
+          ` : ''}
+          <p style="color:var(--text-muted);font-size:12px;margin:14px 0 0">A renovação não é automática — só acontece quando confirmares aqui, ou individualmente na ficha de cada cliente. Tocar em "Renovar" numa caderneta ainda não expirada agenda-a para renovar sozinha assim que a data chegar, sem pedir confirmação outra vez.</p>
+          <div class="btn-row" style="margin-top:16px">
+            <button class="btn btn-secondary" id="modalCancel">Fechar</button>
+            ${expiradas.length > 0 ? `<button class="btn btn-primary" id="modalConfirmRenovarTodas">Renovar todas as expiradas</button>` : ''}
+          </div>
+        </div>`;
+    }
     if(modal.type === 'editTreino'){
       const ec = getClient(modal.clientId);
       const t = ec ? (ec.treinos||[]).find(x => x.id === modal.treinoId) : null;
@@ -2369,6 +2527,27 @@
     if(cancel) cancel.onclick = () => { state.modal = null; showModal(); };
 
     mb.onclick = (e) => { if(e.target === mb){ state.modal = null; showModal(); } };
+
+    const confirmRenovarTodas = mb.querySelector('#modalConfirmRenovarTodas');
+    if(confirmRenovarTodas) confirmRenovarTodas.onclick = async () => {
+      const ids = state.modal.expiradasIds || [];
+      await renewAllExpiredClients(ids);
+      state.modal = null;
+      showToast(`${ids.length} caderneta(s) renovada(s)`);
+      render();
+    };
+
+    mb.querySelectorAll('[data-marcar-renovar]').forEach(btn => {
+      btn.onclick = async () => {
+        const cl = getClient(btn.dataset.marcarRenovar);
+        if(cl){
+          cl.autoRenovar = true;
+          await saveData();
+          showToast(`${cl.nome.split(' ')[0]}: renovação agendada`);
+          showModal(); // volta a desenhar o mesmo modal, agora com "✓ agendada"
+        }
+      };
+    });
 
     const confirmEditTreino = mb.querySelector('#modalConfirmEditTreino');
     if(confirmEditTreino) confirmEditTreino.onclick = async () => {
