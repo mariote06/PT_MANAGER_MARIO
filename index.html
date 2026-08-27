@@ -1385,7 +1385,7 @@
       const rate = (COMISSOES[x.c.servico]||{})[patamar] || 0;
       comissaoInterno += rate;
     });
-
+    
     let externoValues = externo.map(x => (COMISSOES[x.c.servico]||{}).externo || 0);
     externoValues.sort((a,b)=>a-b);
     const totalExterno = externoValues.length;
@@ -1393,7 +1393,17 @@
     const cobrados = externoValues.slice(isentos);
     const comissaoExterno = cobrados.reduce((s,v)=>s+v,0);
 
-    return { total, internoCount: interno.length, externoCount: externo.length, patamar, comissaoInterno, comissaoExterno, isentos };
+    // Dinheiro que entra no mês: pagamentos realmente registados (Pagamentos/Mês)
+    const pm = computePagamentosMes(key);
+    const totalRecebidoMes = pm.totalValor;
+    const valorRecebidoExterno = pm.totalExterno;
+    const valorLiquidoExterno = valorRecebidoExterno - comissaoExterno;
+
+    return {
+      total, internoCount: interno.length, externoCount: externo.length, patamar,
+      comissaoInterno, comissaoExterno, isentos,
+      totalRecebidoMes, valorRecebidoExterno, valorLiquidoExterno
+    };
   }
 
   function computeReceitaMes(key){
@@ -1412,6 +1422,29 @@
     const totalInterno = rows.filter(r => r.c.tipo !== 'Externo').reduce((s,r)=>s+r.valor,0);
     const totalExterno = rows.filter(r => r.c.tipo === 'Externo').reduce((s,r)=>s+r.valor,0);
     return { rows, totalInterno, totalExterno, total: totalInterno + totalExterno };
+  }
+
+  // Relatório mensal baseado nos PAGAMENTOS REALMENTE REGISTADOS (não numa projeção de renovações).
+  // Um pagamento que cubra várias cadernetas de uma vez entra por inteiro no mês em que foi feito.
+  function computePagamentosMes(key){
+    const [start,end] = monthRange(key);
+    let rows = [];
+    state.clients.forEach(c => {
+      (c.pagamentos||[]).forEach(p => {
+        if(p.data >= start && p.data <= end){
+          const cadernetas = p.cadernetas || 1;
+          const sessoes = (c.sessoesEsperadas||0) * cadernetas;
+          rows.push({ c, pagamento: p, cadernetas, sessoes, valor: Number(p.valor||0) });
+        }
+      });
+    });
+    rows.sort((a,b) => b.valor - a.valor);
+    const totalValor = rows.reduce((s,r)=>s+r.valor,0);
+    const totalCadernetas = rows.reduce((s,r)=>s+r.cadernetas,0);
+    const totalSessoes = rows.reduce((s,r)=>s+r.sessoes,0);
+    const totalInterno = rows.filter(r=>r.c.tipo!=='Externo').reduce((s,r)=>s+r.valor,0);
+    const totalExterno = rows.filter(r=>r.c.tipo==='Externo').reduce((s,r)=>s+r.valor,0);
+    return { rows, totalValor, totalCadernetas, totalSessoes, totalInterno, totalExterno };
   }
 
   // ---------- RELATÓRIO EXCEL ----------
@@ -1469,12 +1502,15 @@
       const r = computeReceitaMes(key);
       resumoRows.push({
         'Mês': monthLabel(key),
+        'Total Recebido (€)': Number(t.totalRecebidoMes.toFixed(2)),
         'Treinos Interno': t.internoCount,
         'Treinos Externo': t.externoCount,
         'Treinos Total': t.total,
         'Patamar Comissão': t.patamar === 'alto' ? `>= ${PATAMAR_INTERNO}` : `< ${PATAMAR_INTERNO}`,
-        'Comissão a Receber Interno (€)': Number(t.comissaoInterno.toFixed(2)),
+        'Comissão Interno (€)': Number(t.comissaoInterno.toFixed(2)),
+        'Valor Recebido Externo (€)': Number(t.valorRecebidoExterno.toFixed(2)),
         'Comissão a Pagar Externo (€)': Number(t.comissaoExterno.toFixed(2)),
+        'Valor Líquido Externo (€)': Number(t.valorLiquidoExterno.toFixed(2)),
         'Receita Prevista Interno (€)': Number(r.totalInterno.toFixed(2)),
         'Receita Prevista Externo (€)': Number(r.totalExterno.toFixed(2)),
         'Receita Prevista Total (€)': Number(r.total.toFixed(2)),
@@ -1483,6 +1519,24 @@
     const wsResumo = XLSX.utils.json_to_sheet(resumoRows);
     wsResumo['!cols'] = [{wch:14},{wch:15},{wch:15},{wch:13},{wch:16},{wch:22},{wch:20},{wch:20},{wch:20},{wch:18}];
     XLSX.utils.book_append_sheet(wb, wsResumo, 'Resumo Mensal');
+
+    let pagamentosMesRows = [];
+    for(let i = -6; i <= 3; i++){
+      const key = addMonths(currentKey, i);
+      const pm = computePagamentosMes(key);
+      pagamentosMesRows.push({
+        'Mês': monthLabel(key),
+        'Nº Pagamentos': pm.rows.length,
+        'Cadernetas Pagas': pm.totalCadernetas,
+        'Sessões Pagas': pm.totalSessoes,
+        'Valor Interno (€)': Number(pm.totalInterno.toFixed(2)),
+        'Valor Externo (€)': Number(pm.totalExterno.toFixed(2)),
+        'Valor Total Recebido (€)': Number(pm.totalValor.toFixed(2)),
+      });
+    }
+    const wsPagamentosMes = XLSX.utils.json_to_sheet(pagamentosMesRows);
+    wsPagamentosMes['!cols'] = [{wch:14},{wch:14},{wch:15},{wch:13},{wch:16},{wch:16},{wch:20}];
+    XLSX.utils.book_append_sheet(wb, wsPagamentosMes, 'Pagamentos Mensal');
 
     return wb;
   }
@@ -1508,6 +1562,7 @@
       <div class="finance-toggle">
         <button class="pill ${state.financeTab==='treinos'?'active':''}" data-financetab="treinos">Treinos/Mês</button>
         <button class="pill ${state.financeTab==='receita'?'active':''}" data-financetab="receita">Receita/Mês</button>
+        <button class="pill ${state.financeTab==='pagamentos'?'active':''}" data-financetab="pagamentos">Pagamentos/Mês</button>
       </div>
       <div class="month-nav">
         <button class="montharrow" data-monthnav="-1">‹</button>
@@ -1515,7 +1570,9 @@
         <button class="montharrow" data-monthnav="1">›</button>
       </div>
     `;
-    const body = state.financeTab === 'treinos' ? renderTreinosMesBody(key) : renderReceitaMesBody(key);
+    const body = state.financeTab === 'treinos' ? renderTreinosMesBody(key)
+      : state.financeTab === 'pagamentos' ? renderPagamentosMesBody(key)
+      : renderReceitaMesBody(key);
     const syncHtml = renderSyncCard();
     const reportHtml = `
       <div class="card">
@@ -1627,22 +1684,30 @@
     const s = computeTreinosMes(key);
     return `
       <div class="card">
-        <h3>Resumo do mês</h3>
+        <h3>Dinheiro recebido no mês</h3>
+        <div class="field-row"><span class="k">Total recebido (todos os pagamentos)</span><span class="v">${s.totalRecebidoMes.toFixed(2)}€</span></div>
+      </div>
+      <div class="card">
+        <h3>Resumo de treinos</h3>
         <div class="field-row"><span class="k">Total de sessões</span><span class="v">${s.total}</span></div>
         <div class="field-row"><span class="k">Interno</span><span class="v">${s.internoCount}</span></div>
         <div class="field-row"><span class="k">Externo</span><span class="v">${s.externoCount}</span></div>
         <div class="field-row"><span class="k">Patamar comissão</span><span class="v">${s.patamar==='alto'?`≥ ${PATAMAR_INTERNO} (majorada)`:`&lt; ${PATAMAR_INTERNO}`}</span></div>
       </div>
       <div class="card">
-        <h3>Comissão estimada</h3>
-        <div class="field-row"><span class="k">A receber do ginásio (interno)</span><span class="v">${s.comissaoInterno.toFixed(2)}€</span></div>
-        <div class="field-row"><span class="k">A pagar ao ginásio (externo)</span><span class="v">${s.comissaoExterno.toFixed(2)}€</span></div>
+        <h3>PT Interno</h3>
+        <div class="field-row"><span class="k">Comissão a receber do ginásio</span><span class="v">${s.comissaoInterno.toFixed(2)}€</span></div>
+      </div>
+      <div class="card">
+        <h3>PT Externo</h3>
+        <div class="field-row"><span class="k">Valor recebido diretamente</span><span class="v">${s.valorRecebidoExterno.toFixed(2)}€</span></div>
+        <div class="field-row"><span class="k">Comissão a pagar ao ginásio</span><span class="v">-${s.comissaoExterno.toFixed(2)}€</span></div>
         ${s.isentos>0 ? `<div class="field-row"><span class="k">Sessões isentas (&gt;${ISENCAO_EXTERNO}/mês)</span><span class="v">${s.isentos}</span></div>` : ''}
         <div class="field-row" style="border-top:1px solid var(--line);margin-top:4px;padding-top:10px">
-          <span class="k"><strong>Saldo estimado</strong></span><span class="v"><strong>${(s.comissaoInterno - s.comissaoExterno).toFixed(2)}€</strong></span>
+          <span class="k"><strong>Valor líquido auferido</strong></span><span class="v"><strong>${s.valorLiquidoExterno.toFixed(2)}€</strong></span>
         </div>
       </div>
-      <div class="empty-state" style="text-align:left">Conta as sessões compradas em cada renovação de caderneta (sexta-feira) que caiu neste mês — as sessões esperadas do pacote, não os treinos realmente dados. Comissão calculada com base na tabela de 2026: patamar interno &lt; 80 / ≥ 80 sessões combinadas por mês; sessões externas acima de ${ISENCAO_EXTERNO}/mês ficam isentas de comissão, começando pelas de menor valor.</div>
+      <div class="empty-state" style="text-align:left">Sessões contadas por cadernetas renovadas (sexta-feira) neste mês, não por data de treino. "Dinheiro recebido" vem dos pagamentos realmente registados. Patamar: &lt; ${PATAMAR_INTERNO} / ≥ ${PATAMAR_INTERNO} sessões combinadas; sessões externas acima de ${ISENCAO_EXTERNO}/mês ficam isentas de comissão, começando pelas de menor valor.</div>
     `;
   }
 
@@ -1669,6 +1734,36 @@
         </div>
       </div>
       <div class="empty-state" style="text-align:left">Baseado na data de início do ciclo de cada cliente, projetada de 4 em 4 semanas. Em meses com 5 sextas-feiras, alguns clientes pagam duas vezes — o 🔁 assinala esses casos.</div>
+    `;
+  }
+
+  function renderPagamentosMesBody(key){
+    const d = computePagamentosMes(key);
+    const rowsHtml = d.rows.length === 0 ? `<div class="empty-state">Sem pagamentos registados neste mês.</div>` :
+      d.rows.map(r => `
+        <div class="list-item">
+          <span>${escapeHtml(r.c.nome)}${r.cadernetas>1?` <span class="badge-inline bday">${r.cadernetas} cadernetas</span>`:''}
+            <br><span style="color:var(--text-dim);font-size:11.5px">${fmtDateShort(r.pagamento.data)} · ${r.sessoes} sessões${r.pagamento.nota?` · ${escapeHtml(r.pagamento.nota)}`:''}</span>
+          </span>
+          <span class="mono">${r.valor.toFixed(2)}€</span>
+        </div>
+      `).join('');
+    return `
+      <div class="card">
+        <h3>Pagamentos registados</h3>
+        ${rowsHtml}
+      </div>
+      <div class="card">
+        <h3>Totais do mês</h3>
+        <div class="field-row"><span class="k">Interno (ginásio)</span><span class="v">${d.totalInterno.toFixed(2)}€</span></div>
+        <div class="field-row"><span class="k">Externo (direto ao PT)</span><span class="v">${d.totalExterno.toFixed(2)}€</span></div>
+        <div class="field-row" style="border-top:1px solid var(--line);margin-top:4px;padding-top:10px">
+          <span class="k"><strong>Total recebido</strong></span><span class="v"><strong>${d.totalValor.toFixed(2)}€</strong></span>
+        </div>
+        <div class="field-row"><span class="k">Cadernetas pagas</span><span class="v">${d.totalCadernetas}</span></div>
+        <div class="field-row"><span class="k">Sessões pagas</span><span class="v">${d.totalSessoes}</span></div>
+      </div>
+      <div class="empty-state" style="text-align:left">Baseado nos pagamentos realmente registados (data do pagamento), não numa projeção. Um pagamento adiantado que cubra várias cadernetas conta por inteiro no mês em que foi feito — valor total e todas as sessões dessas cadernetas.</div>
     `;
   }
 
@@ -1944,6 +2039,9 @@
           <input type="number" id="m_pagValor" placeholder="0.00" step="0.01" value="${valorSugerido}">
           <label>Data</label>
           <input type="date" id="m_pagData" value="${todayISO()}">
+          <label>Nº de cadernetas cobertas por este pagamento</label>
+          <input type="number" id="m_pagCadernetas" value="1" min="1" step="1">
+          <p style="color:var(--text-muted);font-size:12px;margin:8px 0 0">Se o pagamento cobrir várias cadernetas de uma vez (ex: 6 pagas adiantado), mete aqui esse número — entra todo no relatório mensal de pagamentos, no mês deste pagamento.</p>
           <label>Nota (opcional)</label>
           <input type="text" id="m_pagNota" placeholder="Ex: renovação caderneta">
           <div class="btn-row" style="margin-top:16px">
@@ -2316,9 +2414,10 @@
       const c = getClient(state.modal.id);
       const valor = parseFloat(mb.querySelector('#m_pagValor').value) || 0;
       const data = mb.querySelector('#m_pagData').value || todayISO();
+      const cadernetas = parseInt(mb.querySelector('#m_pagCadernetas').value) || 1;
       const nota = mb.querySelector('#m_pagNota').value.trim();
       c.pagamentos = c.pagamentos || [];
-      c.pagamentos.push({id: uid(), valor, data, nota});
+      c.pagamentos.push({id: uid(), valor, data, cadernetas, nota});
       await saveData();
       state.modal = null;
       showToast('Pagamento registado');
