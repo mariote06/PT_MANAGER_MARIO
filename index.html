@@ -571,6 +571,32 @@
     return Array.from(results).sort();
   }
 
+  // Datas a usar para efeitos de Receita/Mês: o início real da caderneta ATUAL conta
+  // sempre no seu próprio mês (mesmo que essa caderneta tenha sido prolongada depois —
+  // o pagamento já aconteceu nesse início, o prolongamento só adia o fim). Para as
+  // cadernetas seguintes (ainda por vir), a próxima começa exatamente na validade atual
+  // (já com qualquer prolongamento aplicado) — nunca numa data intermédia de 4 em 4
+  // semanas a partir do início, que deixaria de ser real assim que houvesse um prolongamento.
+  function receitaDatesInMonthForClient(client, monthStartIso, monthEndIso){
+    const results = new Set();
+    if(client.inicioCadernetaAtual && client.inicioCadernetaAtual >= monthStartIso && client.inicioCadernetaAtual <= monthEndIso){
+      results.add(client.inicioCadernetaAtual);
+    }
+    getKnownInicioCadernetaHistory(client).forEach(d => {
+      if(d >= monthStartIso && d <= monthEndIso) results.add(d);
+    });
+    if(client.cicloValidade){
+      let d = client.cicloValidade;
+      let guard = 0;
+      while(d <= monthEndIso && guard < 1000){
+        if(d >= monthStartIso) results.add(d);
+        d = addDays(d, 28);
+        guard++;
+      }
+    }
+    return Array.from(results).sort();
+  }
+
   function todayISO(){
     const d = new Date();
     return toIsoLocal(d);
@@ -1542,7 +1568,7 @@
     const [start,end] = monthRange(key);
     let rows = [];
     state.clients.forEach(c => {
-      let dates = cadernetaStartDatesInMonthForClient(c, start, end);
+      let dates = receitaDatesInMonthForClient(c, start, end);
       if(c.pagoAte){
         dates = dates.filter(d => d > c.pagoAte); // já pago adiantado até esta data: não conta como receita nova
       }
