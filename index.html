@@ -2174,7 +2174,7 @@
             <p style="color:var(--coral);font-weight:700;margin:0 0 6px">Expiradas (${expiradas.length})</p>
             ${expiradas.map(cl => `
               <div class="list-item">
-                <span>${escapeHtml(cl.nome)}</span>
+                <span data-open-client="${cl.id}" style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted">${escapeHtml(cl.nome)}</span>
                 <span class="mono" style="color:var(--coral)">${fmtDateShort(cl.cicloValidade)}</span>
               </div>
             `).join('')}
@@ -2183,7 +2183,7 @@
             <p style="color:var(--amber);font-weight:700;margin:16px 0 6px">A expirar na próxima semana (${expirando.length})</p>
             ${expirando.map(cl => `
               <div class="list-item">
-                <span>${escapeHtml(cl.nome)}</span>
+                <span data-open-client="${cl.id}" style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted">${escapeHtml(cl.nome)}</span>
                 <span style="display:flex;align-items:center;gap:8px">
                   <span class="mono" style="color:var(--amber)">${fmtDateShort(cl.cicloValidade)}</span>
                   ${cl.autoRenovar
@@ -2602,6 +2602,15 @@
           showToast(`${cl.nome.split(' ')[0]}: renovação agendada`);
           showModal(); // volta a desenhar o mesmo modal, agora com "✓ agendada"
         }
+      };
+    });
+
+    mb.querySelectorAll('[data-open-client]').forEach(el => {
+      el.onclick = () => {
+        state.modal = null;
+        state.view = 'detail';
+        state.activeId = el.dataset.openClient;
+        render();
       };
     });
 
