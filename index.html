@@ -722,6 +722,7 @@
     if(c.pagoAte === undefined) c.pagoAte = '';
     if(c.inicioCadernetaAtual === undefined) c.inicioCadernetaAtual = addDays(c.cicloValidade, -28);
     if(c.autoRenovar === undefined) c.autoRenovar = false;
+    if(c.proximoTreino === undefined) c.proximoTreino = null;
     return c;
   }
 
@@ -1067,10 +1068,11 @@
     if(!googleAuth.token){ if(!silent) showToast('Liga primeiro ao Google Calendar'); return; }
     if(!googleTrainingColorId){ if(!silent) showToast('Escolhe primeiro a cor que representa "treino dado" no cartão Google Calendar'); return; }
     try{
+      const today = todayISO();
       const timeMin = new Date(Date.now() - days*86400000).toISOString();
-      const timeMax = new Date().toISOString();
+      const timeMax = new Date(Date.now() + 30*86400000).toISOString(); // inclui 30 dias no futuro, para "próximo treino"
       const windowStart = timeMin.slice(0,10);
-      const windowEnd = timeMax.slice(0,10);
+      const windowEnd = today; // reconciliação de treinos já importados só olha até hoje (são sempre passados)
       const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&singleEvents=true&orderBy=startTime&maxResults=2500`;
       const resp = await fetch(url, { headers: { 'Authorization': `Bearer ${googleAuth.token}` } });
       if(!resp.ok){ if(!silent) showToast('Erro ao ler o Google Calendar'); return; }
@@ -1101,6 +1103,10 @@
         });
       });
 
+      // Limpa o "próximo treino" de todos antes de recalcular, para não ficar preso a um
+      // evento antigo que entretanto já passou, foi apagado ou reagendado.
+      state.clients.forEach(c => { c.proximoTreino = null; });
+
       // Importação: eventos novos, com a cor certa, ainda não registados em nenhum cliente
       events.forEach(ev => {
         if(String(ev.colorId||'') !== googleTrainingColorId){ corDiferente++; return; }
@@ -1108,6 +1114,18 @@
         if(!rawDate) return;
         const rawHora = extractHoraFromEvent(ev);
         const title = ev.summary || '';
+
+        if(rawDate > today){
+          // Evento futuro: não conta como treino dado, só guarda como "próximo treino" (o mais cedo)
+          const { client, tier } = findClientMatchForEvent(ev);
+          if(tier === 'ambiguous' || !client) return;
+          const atual = client.proximoTreino;
+          if(!atual || rawDate < atual.data || (rawDate === atual.data && rawHora && rawHora < (atual.hora||'99:99'))){
+            client.proximoTreino = { data: rawDate, hora: rawHora, nota: title };
+          }
+          return;
+        }
+
         const jaRegistado = state.clients.some(c => (c.treinos||[]).some(t => t.googleEventId === ev.id));
         if(jaRegistado){ jaExistia++; return; }
         const { client, tier } = findClientMatchForEvent(ev);
@@ -1973,6 +1991,7 @@
           <div class="field-row"><span class="k">Dias restantes</span><span class="v">${daysLeft<0?`expirou há ${Math.abs(daysLeft)}d`:daysLeft+'d'}</span></div>
           <div class="field-row"><span class="k">Sessões esperadas</span><span class="v">${total}</span></div>
           <div class="field-row"><span class="k">Último treino</span><span class="v">${ultimoTreinoInfo ? `${fmtDateShort(ultimoTreinoInfo.data)}${ultimoTreinoInfo.hora?` às ${ultimoTreinoInfo.hora}`:''}` : '—'}</span></div>
+          <div class="field-row"><span class="k">Próximo treino</span><span class="v">${c.proximoTreino ? `${fmtDateShort(c.proximoTreino.data)}${c.proximoTreino.hora?` às ${c.proximoTreino.hora}`:''}` : '—'}</span></div>
           <div class="progress-big">${stampsLg}</div>
           <div class="btn-row" style="margin-top:12px">
             <button class="btn btn-primary" id="btnRegistarTreino">Registar treino</button>
