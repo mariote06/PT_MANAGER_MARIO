@@ -1539,35 +1539,67 @@
   }
 
   // ---------- FINANÇAS ----------
-  function computeTreinosMes(key){
+  // Cálculo partilhado: sessões esperadas do mês, por cliente, já com o patamar e a
+  // isenção de externos aplicados. Usado tanto por Treinos/Mês como por Receita/Mês,
+  // para que a comissão de cada cliente reflita sempre o total combinado do mês.
+  function computeSessoesMes(key){
     const [start, end] = monthRange(key);
     let all = [];
     state.clients.forEach(c => {
-      const renewalDates = cadernetaStartDatesInMonthForClient(c, start, end);
-      renewalDates.forEach(() => {
+      const dates = cadernetaStartDatesInMonthForClient(c, start, end);
+      dates.forEach(() => {
         const sessoes = c.sessoesEsperadas || 0;
         for(let i = 0; i < sessoes; i++){
-          all.push({ c });
+          all.push({ client: c, servico: c.servico, tipo: c.tipo });
         }
       });
     });
-    const interno = all.filter(x => x.c.tipo !== 'Externo');
-    const externo = all.filter(x => x.c.tipo === 'Externo');
+    const interno = all.filter(x => x.tipo !== 'Externo');
+    const externo = all.filter(x => x.tipo === 'Externo');
     const total = all.length;
     const patamar = total >= PATAMAR_INTERNO ? 'alto' : 'baixo';
 
-    let comissaoInterno = 0;
-    interno.forEach(x => {
-      const rate = (COMISSOES[x.c.servico]||{})[patamar] || 0;
-      comissaoInterno += rate;
+    interno.forEach(x => { x.comissao = (COMISSOES[x.servico]||{})[patamar] || 0; });
+
+    const externoOrdenado = externo.slice().sort((a,b) =>
+      ((COMISSOES[a.servico]||{}).externo||0) - ((COMISSOES[b.servico]||{}).externo||0)
+    );
+    const isentos = Math.max(0, externoOrdenado.length - ISENCAO_EXTERNO);
+    externoOrdenado.forEach((x, idx) => {
+      x.comissao = idx < isentos ? 0 : ((COMISSOES[x.servico]||{}).externo || 0);
     });
-    
-    let externoValues = externo.map(x => (COMISSOES[x.c.servico]||{}).externo || 0);
-    externoValues.sort((a,b)=>a-b);
-    const totalExterno = externoValues.length;
-    const isentos = Math.max(0, totalExterno - ISENCAO_EXTERNO);
-    const cobrados = externoValues.slice(isentos);
-    const comissaoExterno = cobrados.reduce((s,v)=>s+v,0);
+
+    const porCliente = new Map();
+    all.forEach(x => {
+      const id = x.client.id;
+      if(!porCliente.has(id)) porCliente.set(id, { comissaoInterno: 0, comissaoExterno: 0, sessoesInterno: 0, sessoesExterno: 0 });
+      const entry = porCliente.get(id);
+      if(x.tipo === 'Externo'){ entry.comissaoExterno += (x.comissao||0); entry.sessoesExterno++; }
+      else { entry.comissaoInterno += (x.comissao||0); entry.sessoesInterno++; }
+    });
+
+    return { total, internoCount: interno.length, externoCount: externo.length, patamar, isentos, porCliente };
+  }
+
+  function computeTreinosMes(key){
+    const s = computeSessoesMes(key);
+    let comissaoInterno = 0, comissaoExterno = 0;
+    s.porCliente.forEach(v => { comissaoInterno += v.comissaoInterno; comissaoExterno += v.comissaoExterno; });
+
+    // Lista de clientes com sessões neste mês (cadernetas renovadas/iniciadas no mês em referência)
+    const rows = [];
+    state.clients.forEach(c => {
+      const v = s.porCliente.get(c.id);
+      if(v && (v.sessoesInterno + v.sessoesExterno) > 0){
+        rows.push({
+          c,
+          sessoes: v.sessoesInterno + v.sessoesExterno,
+          comissaoInterno: v.comissaoInterno,
+          comissaoExterno: v.comissaoExterno
+        });
+      }
+    });
+    rows.sort((a,b) => b.sessoes - a.sessoes);
 
     // Dinheiro que entra no mês: pagamentos realmente registados (Pagamentos/Mês)
     const pm = computePagamentosMes(key);
@@ -1576,14 +1608,16 @@
     const valorLiquidoExterno = valorRecebidoExterno - comissaoExterno;
 
     return {
-      total, internoCount: interno.length, externoCount: externo.length, patamar,
-      comissaoInterno, comissaoExterno, isentos,
-      totalRecebidoMes, valorRecebidoExterno, valorLiquidoExterno
+      total: s.total, internoCount: s.internoCount, externoCount: s.externoCount, patamar: s.patamar,
+      comissaoInterno, comissaoExterno, isentos: s.isentos,
+      totalRecebidoMes, valorRecebidoExterno, valorLiquidoExterno,
+      rows
     };
   }
 
   function computeReceitaMes(key){
     const [start,end] = monthRange(key);
+    const sessoesMes = computeSessoesMes(key);
     let rows = [];
     state.clients.forEach(c => {
       let dates = receitaDatesInMonthForClient(c, start, end);
@@ -1591,13 +1625,19 @@
         dates = dates.filter(d => d > c.pagoAte); // já pago adiantado até esta data: não conta como receita nova
       }
       if(dates.length > 0){
-        rows.push({ c, count: dates.length, dates, valor: dates.length * Number(c.valorCaderneta||0) });
+        const v = sessoesMes.porCliente.get(c.id) || { comissaoInterno: 0, comissaoExterno: 0 };
+        rows.push({
+          c, count: dates.length, dates,
+          valor: dates.length * Number(c.valorCaderneta||0),
+          comissaoInterno: v.comissaoInterno,
+          comissaoExterno: v.comissaoExterno
+        });
       }
     });
     rows.sort((a,b) => a.dates[0].localeCompare(b.dates[0]));
     const totalInterno = rows.filter(r => r.c.tipo !== 'Externo').reduce((s,r)=>s+r.valor,0);
     const totalExterno = rows.filter(r => r.c.tipo === 'Externo').reduce((s,r)=>s+r.valor,0);
-    return { rows, totalInterno, totalExterno, total: totalInterno + totalExterno };
+    return { rows, totalInterno, totalExterno, total: totalInterno + totalExterno, patamar: sessoesMes.patamar };
   }
 
   // Relatório mensal baseado nos PAGAMENTOS REALMENTE REGISTADOS (não numa projeção de renovações).
@@ -1883,17 +1923,42 @@
           <span class="k"><strong>Valor líquido auferido</strong></span><span class="v"><strong>${s.valorLiquidoExterno.toFixed(2)}€</strong></span>
         </div>
       </div>
+      <div class="card">
+        <h3>Clientes com cadernetas neste mês</h3>
+        ${s.rows.length === 0 ? '<div class="empty-state">Nenhuma caderneta começa neste mês.</div>' :
+          s.rows.map(r => `
+            <div class="list-item" style="display:block">
+              <div style="display:flex;justify-content:space-between">
+                <span>${escapeHtml(r.c.nome)} <span class="badge-tipo ${r.c.tipo==='Externo'?'externo':'interno'}">${r.c.tipo}</span></span>
+                <span class="mono">${r.sessoes} sessões</span>
+              </div>
+              <div style="font-size:11px;color:var(--text-dim);margin-top:2px">
+                ${r.c.tipo==='Externo' ? `Comissão a pagar ao ginásio: ${r.comissaoExterno.toFixed(2)}€` : `Comissão a receber: ${r.comissaoInterno.toFixed(2)}€`}
+              </div>
+            </div>
+          `).join('')
+        }
+      </div>
       <div class="empty-state" style="text-align:left">Sessões contadas por cadernetas renovadas (sexta-feira) neste mês, não por data de treino. "Dinheiro recebido" vem dos pagamentos realmente registados. Patamar: &lt; ${PATAMAR_INTERNO} / ≥ ${PATAMAR_INTERNO} sessões combinadas; sessões externas acima de ${ISENCAO_EXTERNO}/mês ficam isentas de comissão, começando pelas de menor valor.</div>
     `;
   }
 
   function renderReceitaMesBody(key){
     const d = computeReceitaMes(key);
+    const patamarLabel = d.patamar === 'alto' ? `≥ ${PATAMAR_INTERNO}` : `&lt; ${PATAMAR_INTERNO}`;
     const rowsHtml = d.rows.length === 0 ? `<div class="empty-state">Sem renovações de caderneta previstas para este mês.</div>` :
       d.rows.map(r => `
-        <div class="list-item">
-          <span><span class="mono" style="color:var(--text-dim);font-size:11.5px">${r.dates.map(dt=>fmtDateShort(dt)).join(' + ')}</span> ${escapeHtml(r.c.nome)}${r.count>1?` <span class="badge-inline bday">🔁 x${r.count}</span>`:''}</span>
-          <span class="mono">${r.valor.toFixed(2)}€</span>
+        <div class="list-item" style="display:block">
+          <div style="display:flex;justify-content:space-between">
+            <span><span class="mono" style="color:var(--text-dim);font-size:11.5px">${r.dates.map(dt=>fmtDateShort(dt)).join(' + ')}</span> ${escapeHtml(r.c.nome)}${r.count>1?` <span class="badge-inline bday">🔁 x${r.count}</span>`:''}</span>
+            <span class="mono">${r.valor.toFixed(2)}€</span>
+          </div>
+          <div style="font-size:11px;color:var(--text-dim);margin-top:2px">
+            ${r.c.tipo==='Externo'
+              ? `Comissão ginásio: -${r.comissaoExterno.toFixed(2)}€ · Líquido: ${(r.valor - r.comissaoExterno).toFixed(2)}€`
+              : `Comissão PT (patamar ${patamarLabel}): ${r.comissaoInterno.toFixed(2)}€`
+            }
+          </div>
         </div>
       `).join('');
     return `
