@@ -1754,7 +1754,75 @@
     wsPagamentosMes['!cols'] = [{wch:14},{wch:14},{wch:15},{wch:13},{wch:16},{wch:16},{wch:20}];
     XLSX.utils.book_append_sheet(wb, wsPagamentosMes, 'Pagamentos Mensal');
 
+    // Uma folha por mês, com o detalhe de cadernetas: início, término, prolongamentos,
+    // alterações feitas nesse mês e treinos contratados por caderneta.
+    for(let i = -6; i <= 3; i++){
+      const key = addMonths(currentKey, i);
+      const rows = buildCadernetasMensalRows(key);
+      const ws = XLSX.utils.json_to_sheet(rows);
+      ws['!cols'] = [{wch:10},{wch:28},{wch:14},{wch:14},{wch:16},{wch:40},{wch:16}];
+      let sheetName = monthLabel(key).replace(/[:\\\/\?\*\[\]]/g, '').slice(0,31);
+      XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    }
+
     return wb;
+  }
+
+  // Constrói as linhas da folha de um mês: uma linha por caderneta que começa nesse mês
+  // (ou, se nenhuma começar mas tiver havido alterações nesse mês, uma linha informativa).
+  function buildCadernetasMensalRows(key){
+    const [start, end] = monthRange(key);
+    const rows = [];
+    state.clients.slice().sort((a,b) => a.nome.localeCompare(b.nome)).forEach(c => {
+      const inicios = receitaDatesInMonthForClient(c, start, end);
+      const alteracoesTexto = buildAlteracoesMesTexto(c, start, end);
+      if(inicios.length === 0){
+        if(alteracoesTexto){
+          rows.push({
+            'Código': c.id, 'Nome': c.nome, 'Início da Caderneta': '', 'Término': '',
+            'Prolongamentos (semanas)': '', 'Alterações no mês': alteracoesTexto, 'Treinos Contratados': ''
+          });
+        }
+        return;
+      }
+      inicios.forEach(inicio => {
+        let termino;
+        if(inicio === c.inicioCadernetaAtual){
+          termino = c.cicloValidade;
+        } else {
+          const conhecidos = getKnownInicioCadernetaHistory(c).filter(d => d > inicio);
+          termino = conhecidos.length > 0 ? conhecidos[0] : addDays(inicio, 28);
+        }
+        const diasTotais = daysBetween(inicio, termino);
+        const semanasExtra = Math.max(0, Math.round((diasTotais - 28) / 7));
+        rows.push({
+          'Código': c.id,
+          'Nome': c.nome,
+          'Início da Caderneta': fmtDateShort(inicio),
+          'Término': fmtDateShort(termino),
+          'Prolongamentos (semanas)': semanasExtra,
+          'Alterações no mês': alteracoesTexto,
+          'Treinos Contratados': c.sessoesEsperadas
+        });
+      });
+    });
+    return rows;
+  }
+
+  // Junta, num só texto, as alterações à caderneta (início/validade) cuja data de ação
+  // caiu dentro deste mês — independentemente de essa alteração corresponder ou não a
+  // uma caderneta que também começou neste mês.
+  function buildAlteracoesMesTexto(client, monthStartIso, monthEndIso){
+    const entradas = [];
+    (client.historico||[]).forEach(h => {
+      const tocaCaderneta = (h.changes||[]).some(ch => ch.campo === 'cicloValidade' || ch.campo === 'inicioCadernetaAtual');
+      if(!tocaCaderneta) return;
+      const dataAcao = (h.quando||'').slice(0,10);
+      if(dataAcao >= monthStartIso && dataAcao <= monthEndIso){
+        entradas.push(`${h.label} (${fmtDateShort(dataAcao)})`);
+      }
+    });
+    return entradas.reverse().join('; ');
   }
 
   function exportRelatorioExcel(){
