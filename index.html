@@ -1605,7 +1605,7 @@
     const [start, end] = monthRange(key);
     let all = [];
     state.clients.forEach(c => {
-      const dates = cadernetaStartDatesInMonthForClient(c, start, end);
+      const dates = receitaDatesInMonthForClient(c, start, end);
       dates.forEach(() => {
         const sessoes = c.sessoesEsperadas || 0;
         for(let i = 0; i < sessoes; i++){
