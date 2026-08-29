@@ -505,16 +505,14 @@
     if(anchor) set.add(anchor);
     (client.historico||[]).forEach(h => {
       (h.changes||[]).forEach(ch => {
-        // Só entra se estiver a um múltiplo exato de 28 dias da validade atual — é a
-        // única forma matematicamente garantida de distinguir uma renovação real de
-        // ruído deixado por testes/edições/correções ao longo do tempo, já que
-        // cadernetas reais estão sempre a exatamente 4 semanas umas das outras.
-        // Verifica-se tanto "depois" como "antes": um prolongamento tem "antes" fora
-        // da grelha (nunca chegou a acontecer) e é corretamente excluído; uma renovação
-        // real tem sempre os dois alinhados.
+        // Só entra se estiver a um múltiplo exato de 7 dias (semanas inteiras) da validade
+        // atual — os prolongamentos são sempre em semanas completas (podem não ser
+        // múltiplos de 4 semanas), por isso a grelha certa é de 7 em 7 dias, não 28 em 28.
+        // Isto continua a filtrar ruído de testes/edições que caiam fora de qualquer semana
+        // inteira, sem esconder cadernetas antigas cujo prolongamento quebrou o ciclo de 28.
         if(ch.campo !== 'cicloValidade' || !anchor) return;
-        if(ch.depois && daysBetween(ch.depois, anchor) % 28 === 0) set.add(ch.depois);
-        if(ch.antes && daysBetween(ch.antes, anchor) % 28 === 0) set.add(ch.antes);
+        if(ch.depois && daysBetween(ch.depois, anchor) % 7 === 0) set.add(ch.depois);
+        if(ch.antes && daysBetween(ch.antes, anchor) % 7 === 0) set.add(ch.antes);
       });
     });
     return Array.from(set).sort();
@@ -547,8 +545,8 @@
     (client.historico||[]).forEach(h => {
       (h.changes||[]).forEach(ch => {
         if(ch.campo !== 'inicioCadernetaAtual' || !anchor) return;
-        if(ch.depois && daysBetween(ch.depois, anchor) % 28 === 0) set.add(ch.depois);
-        if(ch.antes && daysBetween(ch.antes, anchor) % 28 === 0) set.add(ch.antes);
+        if(ch.depois && daysBetween(ch.depois, anchor) % 7 === 0) set.add(ch.depois);
+        if(ch.antes && daysBetween(ch.antes, anchor) % 7 === 0) set.add(ch.antes);
       });
     });
     return Array.from(set).sort();
@@ -673,23 +671,67 @@
   }
   function uid(){ return 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
 
+  // Reconstrução por fronteiras REAIS (não por contagem de sessões): usa os inícios
+  // conhecidos (histórico + atual) e a validade atual para fechar a última. Cada
+  // caderneta fica editável, porque corresponde a uma fronteira concreta guardada.
+  // Substitui um valor de fronteira por outro, em todos os sítios onde é referenciado
+  // (campo ao vivo + qualquer entrada do histórico) — usado para editar cadernetas
+  // anteriores, já que o mesmo dia costuma aparecer em mais que uma entrada.
+  function updateInicioCadernetaBoundary(client, oldValue, newValue){
+    if(client.inicioCadernetaAtual === oldValue) client.inicioCadernetaAtual = newValue;
+    (client.historico||[]).forEach(h => (h.changes||[]).forEach(ch => {
+      if(ch.campo === 'inicioCadernetaAtual'){
+        if(ch.antes === oldValue) ch.antes = newValue;
+        if(ch.depois === oldValue) ch.depois = newValue;
+      }
+    }));
+  }
+  function updateCicloValidadeBoundary(client, oldValue, newValue){
+    if(client.cicloValidade === oldValue) client.cicloValidade = newValue;
+    (client.historico||[]).forEach(h => (h.changes||[]).forEach(ch => {
+      if(ch.campo === 'cicloValidade'){
+        if(ch.antes === oldValue) ch.antes = newValue;
+        if(ch.depois === oldValue) ch.depois = newValue;
+      }
+    }));
+  }
+
   function computeCadernetasHistorico(client){
-    const sessoes = client.sessoesEsperadas || 4;
+    const inicios = getKnownInicioCadernetaHistory(client); // ordenado, termina no início atual
     const treinosOrdenados = (client.treinos || []).slice().sort((a,b) => a.data.localeCompare(b.data));
     const blocos = [];
-    for(let i = 0; i < treinosOrdenados.length; i += sessoes){
-      const bloco = treinosOrdenados.slice(i, i + sessoes);
-      const inicio = bloco[0].data;
-      const fim = bloco[bloco.length - 1].data;
+
+    // Treinos anteriores ao primeiro início conhecido (de antes de haver histórico rastreado)
+    if(inicios.length > 0){
+      const antesDoPrimeiro = treinosOrdenados.filter(t => t.data <= inicios[0]);
+      if(antesDoPrimeiro.length > 0){
+        blocos.push({
+          numero: 0, treinos: antesDoPrimeiro, completo: true, emCurso: false,
+          inicio: null, fim: inicios[0], dias: null, prolongada: false, editavel: false
+        });
+      }
+    }
+
+    for(let i = 0; i < inicios.length; i++){
+      const inicio = inicios[i];
+      const emCurso = inicio === client.inicioCadernetaAtual;
+      const fim = emCurso ? client.cicloValidade : inicios[i+1];
+      if(!fim) continue; // segurança: sem fim conhecido e não é a atual, ignora
+      const treinosDoBloco = treinosOrdenados.filter(t => t.data > inicio && t.data <= fim);
       const dias = daysBetween(inicio, fim);
       blocos.push({
-        numero: blocos.length + 1,
-        treinos: bloco,
-        completo: bloco.length >= sessoes,
+        numero: blocos.length + (blocos[0] && blocos[0].numero===0 ? 0 : 1),
+        treinos: treinosDoBloco,
+        completo: !emCurso,
+        emCurso,
         inicio, fim, dias,
-        prolongada: dias > 28
+        prolongada: dias > 28,
+        editavel: true
       });
     }
+    // renumera de forma simples e sequencial para exibição
+    let n = 1;
+    blocos.forEach(b => { if(b.numero !== 0) b.numero = n++; });
     return blocos;
   }
 
@@ -2149,15 +2191,18 @@
 
         <div class="card">
           <h3>Histórico de treinos por caderneta (${(c.treinos||[]).length} no total)</h3>
-          <p style="color:var(--text-muted);font-size:12px;margin:0 0 12px">Reconstrução automática: agrupa os treinos em blocos do tamanho das sessões esperadas (${c.sessoesEsperadas}). Um bloco que tenha demorado mais de 4 semanas a completar-se é assinalado como prolongado. Toca num treino para editar ou reatribuir.</p>
+          <p style="color:var(--text-muted);font-size:12px;margin:0 0 12px">Cadernetas reais, delimitadas pelo Início/Válida até de cada ciclo (incluindo prolongamentos). Toca no lápis para editar as datas de uma caderneta anterior, ou num treino para o editar/reatribuir.</p>
           ${cadernetasHistorico.length===0 ? '<div class="empty-state">Ainda sem treinos registados.</div>' :
             cadernetasHistorico.slice().reverse().map(bloco => `
               <div class="caderneta-block">
                 <div class="caderneta-block-head">
-                  <span>Caderneta ${bloco.numero}${!bloco.completo?' (em curso)':''}${bloco.prolongada?' <span class="badge-tipo externo">Prolongada</span>':''}</span>
-                  <span class="mono">${bloco.treinos.length}/${c.sessoesEsperadas}</span>
+                  <span>${bloco.numero===0?'Antes do histórico rastreado':`Caderneta ${bloco.numero}`}${bloco.emCurso?' (em curso)':''}${bloco.prolongada?' <span class="badge-tipo externo">Prolongada</span>':''}</span>
+                  <span style="display:flex;align-items:center;gap:8px">
+                    <span class="mono">${bloco.treinos.length}/${c.sessoesEsperadas}</span>
+                    ${bloco.editavel ? `<button class="backbtn" data-edit-caderneta="${bloco.inicio}|${bloco.fim}|${bloco.emCurso?'1':'0'}" title="Editar esta caderneta" style="width:26px;height:26px;font-size:13px">✎</button>` : ''}
+                  </span>
                 </div>
-                <div class="caderneta-block-range">${fmtDateShort(bloco.inicio)} – ${fmtDateShort(bloco.fim)}${bloco.prolongada?` · ${bloco.dias} dias`:''}</div>
+                <div class="caderneta-block-range">${bloco.inicio?`${fmtDateShort(bloco.inicio)} – `:'até '}${fmtDateShort(bloco.fim)}${bloco.prolongada?` · ${bloco.dias} dias`:''}</div>
                 ${bloco.treinos.map(t => `
                   <div class="list-item">
                     <span data-edit-treino="${t.id}" style="cursor:pointer">${fmtDateShort(t.data)}${t.hora?` ${t.hora}`:''} ${t.nota?`— ${escapeHtml(t.nota)}`:''}${t.googleEventId?' <span class="badge-inline bday">Calendar</span>':''}</span>
@@ -2309,6 +2354,21 @@
 
   function renderModal(modal){
     const c = getClient(modal.id);
+    if(modal.type === 'editCaderneta'){
+      return `
+        <div class="modal-sheet">
+          <h3>Editar caderneta anterior</h3>
+          <p>Ajustar as datas desta caderneta de ${escapeHtml(c.nome)}. Isto atualiza também a caderneta seguinte/anterior, já que partilham a mesma fronteira.</p>
+          <label>Início</label>
+          <input type="date" id="m_cadInicio" value="${modal.inicio || ''}">
+          <label>Término</label>
+          <input type="date" id="m_cadFim" value="${modal.fim || ''}">
+          <div class="btn-row" style="margin-top:16px">
+            <button class="btn btn-secondary" id="modalCancel">Cancelar</button>
+            <button class="btn btn-primary" id="modalConfirmEditCaderneta">Guardar</button>
+          </div>
+        </div>`;
+    }
     if(modal.type === 'notificacaoCadernetas'){
       const expiradas = (modal.expiradasIds||[]).map(id => getClient(id)).filter(Boolean);
       const expirando = (modal.expirandoIds||[]).map(id => getClient(id)).filter(Boolean);
@@ -2634,6 +2694,14 @@
       el.onclick = () => { state.modal = { type: 'editTreino', clientId: state.activeId, treinoId: el.dataset.editTreino }; showModal(); };
     });
 
+    ov.querySelectorAll('[data-edit-caderneta]').forEach(el => {
+      el.onclick = () => {
+        const [inicio, fim, emCurso] = el.dataset.editCaderneta.split('|');
+        state.modal = { type: 'editCaderneta', id: state.activeId, inicio: inicio || '', fim: fim || '', emCurso: emCurso === '1' };
+        showModal();
+      };
+    });
+
     ov.querySelectorAll('[data-del-treino]').forEach(b => {
       b.onclick = async () => {
         const c = getClient(state.activeId);
@@ -2738,6 +2806,43 @@
       await renewAllExpiredClients(ids);
       state.modal = null;
       showToast(`${ids.length} caderneta(s) renovada(s)`);
+      render();
+    };
+
+    const confirmEditCaderneta = mb.querySelector('#modalConfirmEditCaderneta');
+    if(confirmEditCaderneta) confirmEditCaderneta.onclick = async () => {
+      const c = getClient(state.modal.id);
+      const inicioAntigo = state.modal.inicio;
+      const fimAntigo = state.modal.fim;
+      const emCurso = state.modal.emCurso;
+      const novoInicio = mb.querySelector('#m_cadInicio').value;
+      const novoFim = mb.querySelector('#m_cadFim').value;
+      if(!novoInicio || !novoFim || novoFim <= novoInicio){
+        showToast('Datas inválidas: o término tem de ser depois do início');
+        return;
+      }
+      const changes = [];
+      if(inicioAntigo && novoInicio !== inicioAntigo){
+        updateInicioCadernetaBoundary(c, inicioAntigo, novoInicio);
+        changes.push({ campo: 'inicioCadernetaAtual', rotulo: 'Início da Caderneta (editada)', antes: inicioAntigo, depois: novoInicio });
+      }
+      if(fimAntigo && novoFim !== fimAntigo){
+        // O término da caderneta ATUAL vive em cicloValidade; o das anteriores vive em
+        // inicioCadernetaAtual (é o início da caderneta seguinte).
+        if(emCurso){
+          updateCicloValidadeBoundary(c, fimAntigo, novoFim);
+          changes.push({ campo: 'cicloValidade', rotulo: 'Válida até (editada)', antes: fimAntigo, depois: novoFim });
+        } else {
+          updateInicioCadernetaBoundary(c, fimAntigo, novoFim);
+          changes.push({ campo: 'inicioCadernetaAtual', rotulo: 'Término da Caderneta (editado)', antes: fimAntigo, depois: novoFim });
+        }
+      }
+      if(changes.length > 0){
+        logChange(c, 'Edição de caderneta anterior', changes);
+        await saveData();
+        showToast('Caderneta atualizada');
+      }
+      state.modal = null;
       render();
     };
 
