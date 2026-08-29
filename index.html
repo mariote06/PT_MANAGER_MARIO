@@ -510,9 +510,11 @@
         // múltiplos de 4 semanas), por isso a grelha certa é de 7 em 7 dias, não 28 em 28.
         // Isto continua a filtrar ruído de testes/edições que caiam fora de qualquer semana
         // inteira, sem esconder cadernetas antigas cujo prolongamento quebrou o ciclo de 28.
+        // Nunca aceita datas DEPOIS da validade atual: essas ainda não aconteceram (podem
+        // ser resíduo de testes/edições antigas) e são sempre calculadas por projeção.
         if(ch.campo !== 'cicloValidade' || !anchor) return;
-        if(ch.depois && daysBetween(ch.depois, anchor) % 7 === 0) set.add(ch.depois);
-        if(ch.antes && daysBetween(ch.antes, anchor) % 7 === 0) set.add(ch.antes);
+        if(ch.depois && ch.depois <= anchor && daysBetween(ch.depois, anchor) % 7 === 0) set.add(ch.depois);
+        if(ch.antes && ch.antes <= anchor && daysBetween(ch.antes, anchor) % 7 === 0) set.add(ch.antes);
       });
     });
     return Array.from(set).sort();
@@ -545,8 +547,8 @@
     (client.historico||[]).forEach(h => {
       (h.changes||[]).forEach(ch => {
         if(ch.campo !== 'inicioCadernetaAtual' || !anchor) return;
-        if(ch.depois && daysBetween(ch.depois, anchor) % 7 === 0) set.add(ch.depois);
-        if(ch.antes && daysBetween(ch.antes, anchor) % 7 === 0) set.add(ch.antes);
+        if(ch.depois && ch.depois <= anchor && daysBetween(ch.depois, anchor) % 7 === 0) set.add(ch.depois);
+        if(ch.antes && ch.antes <= anchor && daysBetween(ch.antes, anchor) % 7 === 0) set.add(ch.antes);
       });
     });
     return Array.from(set).sort();
@@ -697,7 +699,10 @@
   }
 
   function computeCadernetasHistorico(client){
-    const inicios = getKnownInicioCadernetaHistory(client); // ordenado, termina no início atual
+    // Nunca mostra nada além da caderneta atual: qualquer data conhecida DEPOIS do
+    // início atual ainda não aconteceu de verdade (pode ser resíduo de testes/edições
+    // antigas), por isso é sempre descartada aqui.
+    const inicios = getKnownInicioCadernetaHistory(client).filter(d => !client.inicioCadernetaAtual || d <= client.inicioCadernetaAtual);
     const treinosOrdenados = (client.treinos || []).slice().sort((a,b) => a.data.localeCompare(b.data));
     const blocos = [];
 
