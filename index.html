@@ -1472,6 +1472,7 @@
       home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>',
       users: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.2"/><path d="M2 20c0-3.5 3-6 7-6s7 2.5 7 6"/><circle cx="17" cy="9" r="2.6"/><path d="M16 14c2.8.4 5 2.6 5 6"/></svg>',
       euro: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 7a6.5 6.5 0 1 0 0 10"/><path d="M3 10h9M3 14h8"/></svg>',
+      history: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v4h4"/><path d="M12 7v5l4 2"/></svg>',
     };
     return icons[name] || '';
   }
@@ -1486,10 +1487,11 @@
     if(state.view === 'dashboard') html = renderDashboard();
     else if(state.view === 'list') html = renderList();
     else if(state.view === 'financas') html = renderFinancas();
+    else if(state.view === 'historico') html = renderHistoricoMensal();
     root.innerHTML = `
       ${topbarHTML()}
       <div class="content">${html}</div>
-      ${state.view !== 'financas' ? '<button class="fab" id="fabAdd">+</button>' : ''}
+      ${(state.view !== 'financas' && state.view !== 'historico') ? '<button class="fab" id="fabAdd">+</button>' : ''}
       ${bottomNavHTML()}
     `;
     bindMainEvents();
@@ -1506,7 +1508,7 @@
   }
 
   function topbarHTML(){
-    const titles = { dashboard: 'Dashboard', list: 'Clientes', financas: 'Finanças' };
+    const titles = { dashboard: 'Dashboard', list: 'Clientes', financas: 'Finanças', historico: 'Histórico Mensal' };
     const title = titles[state.view] || 'Dashboard';
     return `
       <div class="topbar">
@@ -1540,6 +1542,9 @@
         </button>
         <button class="navbtn ${state.view==='financas'?'active':''}" data-nav="financas">
           ${icon('euro')}<span>Finanças</span>
+        </button>
+        <button class="navbtn ${state.view==='historico'?'active':''}" data-nav="historico">
+          ${icon('history')}<span>Histórico</span>
         </button>
       </div>
     `;
@@ -1673,7 +1678,14 @@
       else { entry.comissaoInterno += (x.comissao||0); entry.sessoesInterno++; }
     });
 
-    return { total, internoCount: interno.length, externoCount: externo.length, patamar, isentos, porCliente };
+    // Contagem de sessões por serviço + tipo (para o resumo PT30/PT60 interno/externo)
+    const porServicoTipo = {};
+    all.forEach(x => {
+      const chave = `${x.servico}_${x.tipo === 'Externo' ? 'Externo' : 'Interno'}`;
+      porServicoTipo[chave] = (porServicoTipo[chave] || 0) + 1;
+    });
+
+    return { total, internoCount: interno.length, externoCount: externo.length, patamar, isentos, porCliente, porServicoTipo };
   }
 
   function computeTreinosMes(key){
@@ -1702,10 +1714,17 @@
     const valorRecebidoExterno = pm.totalExterno;
     const valorLiquidoExterno = valorRecebidoExterno - comissaoExterno;
 
+    // PT30/PT60 comprados no mês, por Interno/Externo
+    const pt30Interno = s.porServicoTipo['PT 30_Interno'] || 0;
+    const pt30Externo = s.porServicoTipo['PT 30_Externo'] || 0;
+    const pt60Interno = s.porServicoTipo['PT 60_Interno'] || 0;
+    const pt60Externo = s.porServicoTipo['PT 60_Externo'] || 0;
+
     return {
       total: s.total, internoCount: s.internoCount, externoCount: s.externoCount, patamar: s.patamar,
       comissaoInterno, comissaoExterno, isentos: s.isentos,
       totalRecebidoMes, valorRecebidoExterno, valorLiquidoExterno,
+      pt30Interno, pt30Externo, pt60Interno, pt60Externo,
       rows
     };
   }
@@ -1935,6 +1954,53 @@
     }
   }
 
+  // Resumo de um único mês para o Histórico Mensal: treinos, cadernetas vendidas
+  // (Interno/Externo), patamar e finanças — tudo reaproveitado das mesmas funções
+  // usadas em Finanças, para nunca haver divergência entre separadores.
+  function computeHistoricoMes(key){
+    const [start, end] = monthRange(key);
+    const t = computeTreinosMes(key);
+    const r = computeReceitaMes(key);
+    let cadernetasInterno = 0, cadernetasExterno = 0;
+    state.clients.forEach(c => {
+      const n = receitaDatesInMonthForClient(c, start, end).length;
+      if(n === 0) return;
+      if(c.tipo === 'Externo') cadernetasExterno += n; else cadernetasInterno += n;
+    });
+    return {
+      key,
+      treinosInterno: t.internoCount, treinosExterno: t.externoCount, treinosTotal: t.total,
+      patamar: t.patamar,
+      cadernetasInterno, cadernetasExterno,
+      comissaoInterno: t.comissaoInterno, comissaoExterno: t.comissaoExterno,
+      receitaPrevista: r.total
+    };
+  }
+
+  function renderHistoricoMensal(){
+    const currentKey = monthKey(todayISO());
+    const meses = [];
+    for(let i = 0; i >= -11; i--){
+      meses.push(computeHistoricoMes(addMonths(currentKey, i)));
+    }
+    return `
+      ${meses.map(m => `
+        <div class="card">
+          <h3>${monthLabel(m.key)}</h3>
+          <div class="field-row"><span class="k">Treinos Interno</span><span class="v">${m.treinosInterno}</span></div>
+          <div class="field-row"><span class="k">Treinos Externo</span><span class="v">${m.treinosExterno}</span></div>
+          <div class="field-row"><span class="k">Treinos Total</span><span class="v">${m.treinosTotal}</span></div>
+          <div class="field-row"><span class="k">Patamar</span><span class="v">${m.patamar==='alto'?`≥ ${PATAMAR_INTERNO}`:`&lt; ${PATAMAR_INTERNO}`}</span></div>
+          <div class="field-row" style="border-top:1px solid var(--line);margin-top:6px;padding-top:8px"><span class="k">Cadernetas vendidas — Interno</span><span class="v">${m.cadernetasInterno}</span></div>
+          <div class="field-row"><span class="k">Cadernetas vendidas — Externo</span><span class="v">${m.cadernetasExterno}</span></div>
+          <div class="field-row" style="border-top:1px solid var(--line);margin-top:6px;padding-top:8px"><span class="k">Comissão Interno</span><span class="v">${m.comissaoInterno.toFixed(2)}€</span></div>
+          <div class="field-row"><span class="k">Comissão Externo</span><span class="v">${m.comissaoExterno.toFixed(2)}€</span></div>
+          <div class="field-row"><span class="k">Receita prevista total</span><span class="v"><strong>${m.receitaPrevista.toFixed(2)}€</strong></span></div>
+        </div>
+      `).join('')}
+    `;
+  }
+
   function renderFinancas(){
     const key = state.financeMonth;
     const toggleHtml = `
@@ -2063,8 +2129,11 @@
     const s = computeTreinosMes(key);
     return `
       <div class="card">
-        <h3>Dinheiro recebido no mês</h3>
-        <div class="field-row"><span class="k">Total recebido (todos os pagamentos)</span><span class="v">${s.totalRecebidoMes.toFixed(2)}€</span></div>
+        <h3>Treinos comprados</h3>
+        <div class="field-row"><span class="k">PT 30 min — Interno</span><span class="v">${s.pt30Interno}</span></div>
+        <div class="field-row"><span class="k">PT 30 min — Externo</span><span class="v">${s.pt30Externo}</span></div>
+        <div class="field-row"><span class="k">PT 60 min — Interno</span><span class="v">${s.pt60Interno}</span></div>
+        <div class="field-row"><span class="k">PT 60 min — Externo</span><span class="v">${s.pt60Externo}</span></div>
       </div>
       <div class="card">
         <h3>Resumo de treinos</h3>
@@ -3063,7 +3132,7 @@
   // Deslizar para o lado nos três separadores principais avança/recua entre eles
   // (Dashboard <-> Clientes <-> Finanças), tal como um app nativo no Android.
   (function setupSwipeNav(){
-    const ORDEM_SEPARADORES = ['dashboard', 'list', 'financas'];
+    const ORDEM_SEPARADORES = ['dashboard', 'list', 'financas', 'historico'];
     let touchStartX = 0, touchStartY = 0, touchActive = false;
     root.addEventListener('touchstart', (e) => {
       if(e.touches.length !== 1) return;
