@@ -1716,17 +1716,19 @@
     const valorRecebidoExterno = pm.totalExterno;
     const valorLiquidoExterno = valorRecebidoExterno - comissaoExterno;
 
-    // PT30/PT60 comprados no mês, por Interno/Externo
+    // PT30/PT60/PT Group 60 comprados no mês, por Interno/Externo
     const pt30Interno = s.porServicoTipo['PT 30_Interno'] || 0;
     const pt30Externo = s.porServicoTipo['PT 30_Externo'] || 0;
     const pt60Interno = s.porServicoTipo['PT 60_Interno'] || 0;
     const pt60Externo = s.porServicoTipo['PT 60_Externo'] || 0;
+    const ptGroup60Interno = s.porServicoTipo['PT Group 60_Interno'] || 0;
+    const ptGroup60Externo = s.porServicoTipo['PT Group 60_Externo'] || 0;
 
     return {
       total: s.total, internoCount: s.internoCount, externoCount: s.externoCount, patamar: s.patamar,
       comissaoInterno, comissaoExterno, isentos: s.isentos,
       totalRecebidoMes, valorRecebidoExterno, valorLiquidoExterno,
-      pt30Interno, pt30Externo, pt60Interno, pt60Externo,
+      pt30Interno, pt30Externo, pt60Interno, pt60Externo, ptGroup60Interno, ptGroup60Externo,
       rows
     };
   }
@@ -2189,6 +2191,8 @@
         <div class="field-row"><span class="k">PT 30 min — Externo</span><span class="v">${s.pt30Externo}</span></div>
         <div class="field-row"><span class="k">PT 60 min — Interno</span><span class="v">${s.pt60Interno}</span></div>
         <div class="field-row"><span class="k">PT 60 min — Externo</span><span class="v">${s.pt60Externo}</span></div>
+        <div class="field-row"><span class="k">PT Group 60 — Interno</span><span class="v">${s.ptGroup60Interno}</span></div>
+        <div class="field-row"><span class="k">PT Group 60 — Externo</span><span class="v">${s.ptGroup60Externo}</span></div>
       </div>
       <div class="card">
         <h3>Resumo de treinos</h3>
