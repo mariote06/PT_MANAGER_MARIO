@@ -343,6 +343,8 @@
     modal: null, // {type, id}
     financeTab: 'treinos', // treinos | receita
     financeMonth: null, // 'YYYY-MM', set on load
+    historicoAberto: null, // mantido por compatibilidade, não usado
+    historicoAbertos: [], // até 2 meses abertos em simultâneo no separador Histórico
   };
 
   const DOW = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
@@ -1954,6 +1956,46 @@
     }
   }
 
+  function exportHistoricoExcel(){
+    if(typeof XLSX === 'undefined'){
+      showToast('Biblioteca Excel não carregou. Verifica a ligação à internet e tenta de novo.');
+      return;
+    }
+    try{
+      const wb = buildHistoricoWorkbook();
+      XLSX.writeFile(wb, `historico_mensal_${todayISO()}.xlsx`);
+      showToast('Relatório exportado');
+    }catch(e){
+      console.error(e);
+      showToast('Não foi possível gerar o relatório');
+    }
+  }
+
+  function buildHistoricoWorkbook(){
+    const wb = XLSX.utils.book_new();
+    const currentKey = monthKey(todayISO());
+    const rows = [];
+    for(let i = 0; i >= -11; i--){
+      const m = computeHistoricoMes(addMonths(currentKey, i));
+      rows.push({
+        'Mês': monthLabel(m.key),
+        'Treinos Interno': m.treinosInterno,
+        'Treinos Externo': m.treinosExterno,
+        'Treinos Total': m.treinosTotal,
+        'Patamar': m.patamar === 'alto' ? `>= ${PATAMAR_INTERNO}` : `< ${PATAMAR_INTERNO}`,
+        'Cadernetas Vendidas Interno': m.cadernetasInterno,
+        'Cadernetas Vendidas Externo': m.cadernetasExterno,
+        'Comissão Interno (€)': Number(m.comissaoInterno.toFixed(2)),
+        'Comissão Externo (€)': Number(m.comissaoExterno.toFixed(2)),
+        'Receita Prevista Total (€)': Number(m.receitaPrevista.toFixed(2)),
+      });
+    }
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = [{wch:14},{wch:15},{wch:15},{wch:13},{wch:10},{wch:22},{wch:22},{wch:18},{wch:18},{wch:20}];
+    XLSX.utils.book_append_sheet(wb, ws, 'Histórico Mensal');
+    return wb;
+  }
+
   // Resumo de um único mês para o Histórico Mensal: treinos, cadernetas vendidas
   // (Interno/Externo), patamar e finanças — tudo reaproveitado das mesmas funções
   // usadas em Finanças, para nunca haver divergência entre separadores.
@@ -1984,20 +2026,33 @@
       meses.push(computeHistoricoMes(addMonths(currentKey, i)));
     }
     return `
-      ${meses.map(m => `
+      <div class="card">
+        <h3>Relatório Excel do Histórico</h3>
+        <p style="color:var(--text-muted);font-size:12.5px;margin:0 0 12px">Exporta os últimos 12 meses (treinos, cadernetas, patamar e finanças) para um ficheiro .xlsx.</p>
+        <button class="btn btn-primary" id="btnExportHistorico">Exportar histórico (.xlsx)</button>
+      </div>
+      ${meses.map(m => {
+        const aberto = state.historicoAbertos.includes(m.key);
+        return `
         <div class="card">
-          <h3>${monthLabel(m.key)}</h3>
-          <div class="field-row"><span class="k">Treinos Interno</span><span class="v">${m.treinosInterno}</span></div>
-          <div class="field-row"><span class="k">Treinos Externo</span><span class="v">${m.treinosExterno}</span></div>
-          <div class="field-row"><span class="k">Treinos Total</span><span class="v">${m.treinosTotal}</span></div>
-          <div class="field-row"><span class="k">Patamar</span><span class="v">${m.patamar==='alto'?`≥ ${PATAMAR_INTERNO}`:`&lt; ${PATAMAR_INTERNO}`}</span></div>
-          <div class="field-row" style="border-top:1px solid var(--line);margin-top:6px;padding-top:8px"><span class="k">Cadernetas vendidas — Interno</span><span class="v">${m.cadernetasInterno}</span></div>
-          <div class="field-row"><span class="k">Cadernetas vendidas — Externo</span><span class="v">${m.cadernetasExterno}</span></div>
-          <div class="field-row" style="border-top:1px solid var(--line);margin-top:6px;padding-top:8px"><span class="k">Comissão Interno</span><span class="v">${m.comissaoInterno.toFixed(2)}€</span></div>
-          <div class="field-row"><span class="k">Comissão Externo</span><span class="v">${m.comissaoExterno.toFixed(2)}€</span></div>
-          <div class="field-row"><span class="k">Receita prevista total</span><span class="v"><strong>${m.receitaPrevista.toFixed(2)}€</strong></span></div>
+          <div data-toggle-mes="${m.key}" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center">
+            <h3 style="margin:0">${monthLabel(m.key)}</h3>
+            <span style="color:var(--text-dim);font-size:16px">${aberto ? '▾' : '▸'}</span>
+          </div>
+          ${aberto ? `
+            <div class="field-row" style="margin-top:10px"><span class="k">Treinos Interno</span><span class="v">${m.treinosInterno}</span></div>
+            <div class="field-row"><span class="k">Treinos Externo</span><span class="v">${m.treinosExterno}</span></div>
+            <div class="field-row"><span class="k">Treinos Total</span><span class="v">${m.treinosTotal}</span></div>
+            <div class="field-row"><span class="k">Patamar</span><span class="v">${m.patamar==='alto'?`≥ ${PATAMAR_INTERNO}`:`&lt; ${PATAMAR_INTERNO}`}</span></div>
+            <div class="field-row" style="border-top:1px solid var(--line);margin-top:6px;padding-top:8px"><span class="k">Cadernetas vendidas — Interno</span><span class="v">${m.cadernetasInterno}</span></div>
+            <div class="field-row"><span class="k">Cadernetas vendidas — Externo</span><span class="v">${m.cadernetasExterno}</span></div>
+            <div class="field-row" style="border-top:1px solid var(--line);margin-top:6px;padding-top:8px"><span class="k">Comissão Interno</span><span class="v">${m.comissaoInterno.toFixed(2)}€</span></div>
+            <div class="field-row"><span class="k">Comissão Externo</span><span class="v">${m.comissaoExterno.toFixed(2)}€</span></div>
+            <div class="field-row"><span class="k">Receita prevista total</span><span class="v"><strong>${m.receitaPrevista.toFixed(2)}€</strong></span></div>
+          ` : ''}
         </div>
-      `).join('')}
+      `;
+      }).join('')}
     `;
   }
 
@@ -2644,6 +2699,23 @@
     root.querySelectorAll('[data-nav]').forEach(btn => {
       btn.onclick = () => { state.view = btn.dataset.nav; render(); };
     });
+
+    root.querySelectorAll('[data-toggle-mes]').forEach(el => {
+      el.onclick = () => {
+        const key = el.dataset.toggleMes;
+        const idx = state.historicoAbertos.indexOf(key);
+        if(idx !== -1){
+          state.historicoAbertos.splice(idx, 1); // já estava aberto: fecha
+        } else {
+          state.historicoAbertos.push(key); // abre; se já houver 2, fecha o mais antigo
+          if(state.historicoAbertos.length > 2) state.historicoAbertos.shift();
+        }
+        render();
+      };
+    });
+
+    const btnExportHistorico = root.querySelector('#btnExportHistorico');
+    if(btnExportHistorico) btnExportHistorico.onclick = () => exportHistoricoExcel();
 
     root.querySelectorAll('[data-open]').forEach(el => {
       el.onclick = () => { state.view = 'detail'; state.activeId = el.dataset.open; render(); };
