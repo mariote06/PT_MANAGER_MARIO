@@ -2981,6 +2981,36 @@
   }
   function escapeAttr(s){ return escapeHtml(s); }
 
+  // Deslizar para o lado nos três separadores principais avança/recua entre eles
+  // (Dashboard <-> Clientes <-> Finanças), tal como um app nativo no Android.
+  (function setupSwipeNav(){
+    const ORDEM_SEPARADORES = ['dashboard', 'list', 'financas'];
+    let touchStartX = 0, touchStartY = 0, touchActive = false;
+    root.addEventListener('touchstart', (e) => {
+      if(e.touches.length !== 1) return;
+      touchActive = ORDEM_SEPARADORES.includes(state.view);
+      touchStartX = e.touches[0].clientX;
+      touchStartY = e.touches[0].clientY;
+    }, { passive: true });
+    root.addEventListener('touchend', (e) => {
+      if(!touchActive) return;
+      touchActive = false;
+      const touch = e.changedTouches[0];
+      const dx = touch.clientX - touchStartX;
+      const dy = touch.clientY - touchStartY;
+      if(Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.5) return; // não é um deslize horizontal claro
+      const idx = ORDEM_SEPARADORES.indexOf(state.view);
+      if(idx === -1) return;
+      if(dx < 0 && idx < ORDEM_SEPARADORES.length - 1){
+        state.view = ORDEM_SEPARADORES[idx + 1];
+        render();
+      } else if(dx > 0 && idx > 0){
+        state.view = ORDEM_SEPARADORES[idx - 1];
+        render();
+      }
+    }, { passive: true });
+  })();
+
   initGoogleAuth();
   loadData().then(() => tryAutoConnectGoogle());
 })();
