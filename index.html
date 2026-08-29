@@ -616,6 +616,42 @@
     const d = parseDate(iso);
     return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
   }
+  // Frases motivacionais para juntar ao lembrete de treino — escolhida uma ao acaso
+  // de cada vez que a mensagem é gerada.
+  const FRASES_MOTIVACIONAIS = [
+    'Vai ser um ótimo treino, conto contigo! 💪',
+    'Bora com tudo, vai valer a pena! 🔥',
+    'Cada treino é um passo mais perto do teu objetivo!',
+    'Prepara-te para dar o teu melhor! 💪',
+    'Falta pouco, vamos com energia!',
+    'O teu corpo agradece cada treino — até já!',
+    'Vamos superar-nos hoje também!',
+    'Traz a boa disposição, o resto garanto eu! 😄',
+    'Consistência é a chave — estás no caminho certo!',
+    'Nada como um bom treino para começar/terminar bem o dia!'
+  ];
+  function fraseMotivacionalAleatoria(){
+    return FRASES_MOTIVACIONAIS[Math.floor(Math.random() * FRASES_MOTIVACIONAIS.length)];
+  }
+  // Texto da mensagem de lembrete de treino, com saudação, data/hora e frase motivacional aleatória.
+  function buildLembreteTreinoTexto(client){
+    if(!client.proximoTreino) return null;
+    const dataFormatada = fmtDateShort(client.proximoTreino.data);
+    const horaFormatada = client.proximoTreino.hora ? ` às ${client.proximoTreino.hora}` : '';
+    const primeiroNome = (client.nome || '').split(' ')[0];
+    return `Olá ${primeiroNome}! O teu próximo treino está marcado para ${dataFormatada}${horaFormatada}. ${fraseMotivacionalAleatoria()}`;
+  }
+  // Constrói o link "wa.me" com o contacto do cliente e o texto dado já preenchido.
+  // Abre o WhatsApp com a mensagem pronta — o utilizador ainda tem de tocar em enviar
+  // (o WhatsApp não permite envio totalmente automático a partir de um site).
+  function buildWhatsAppLink(client, texto){
+    if(!client.contacto || !texto) return null;
+    let phone = String(client.contacto).replace(/[^\d+]/g, '');
+    if(phone.startsWith('+')) phone = phone.slice(1);
+    if(phone.length === 9) phone = '351' + phone; // nº português sem indicativo
+    if(!phone) return null;
+    return `https://wa.me/${phone}?text=${encodeURIComponent(texto)}`;
+  }
   // Período coberto por um pagamento: começa no "Início da Caderneta" real do cliente e
   // termina exatamente na "Válida até" real (já com qualquer prolongamento aplicado) —
   // os mesmos valores que aparecem na ficha. Se o pagamento cobrir mais que uma caderneta,
@@ -2184,6 +2220,7 @@
           <div class="field-row"><span class="k">Sessões esperadas</span><span class="v">${total}</span></div>
           <div class="field-row"><span class="k">Último treino</span><span class="v">${ultimoTreinoInfo ? `${fmtDateShort(ultimoTreinoInfo.data)}${ultimoTreinoInfo.hora?` às ${ultimoTreinoInfo.hora}`:''}` : '—'}</span></div>
           <div class="field-row"><span class="k">Próximo treino</span><span class="v">${c.proximoTreino ? `${fmtDateShort(c.proximoTreino.data)}${c.proximoTreino.hora?` às ${c.proximoTreino.hora}`:''}` : '—'}</span></div>
+          ${c.proximoTreino && c.contacto ? `<button class="btn btn-secondary" id="btnPreviewWhatsApp" style="margin-top:8px">Enviar lembrete por WhatsApp</button>` : ''}
           <div class="progress-big">${stampsLg}</div>
           <div class="btn-row" style="margin-top:12px">
             <button class="btn btn-primary" id="btnRegistarTreino">Registar treino</button>
@@ -2371,6 +2408,19 @@
           <div class="btn-row" style="margin-top:16px">
             <button class="btn btn-secondary" id="modalCancel">Cancelar</button>
             <button class="btn btn-primary" id="modalConfirmEditCaderneta">Guardar</button>
+          </div>
+        </div>`;
+    }
+    if(modal.type === 'previewWhatsApp'){
+      return `
+        <div class="modal-sheet">
+          <h3>Pré-visualização da mensagem</h3>
+          <p>Podes editar o texto antes de enviar para ${escapeHtml(c.nome)}.</p>
+          <textarea id="m_whatsappTexto" rows="5" style="width:100%;box-sizing:border-box;background:var(--bg-card);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px;font-family:inherit;font-size:14px">${escapeHtml(modal.texto || '')}</textarea>
+          <div class="btn-row" style="margin-top:16px">
+            <button class="btn btn-secondary" id="modalCancel">Cancelar</button>
+            <button class="btn btn-secondary" id="modalRegenerarFrase">🔀 Trocar frase</button>
+            <button class="btn btn-primary" id="modalEnviarWhatsApp">Abrir WhatsApp</button>
           </div>
         </div>`;
     }
@@ -2668,6 +2718,14 @@
     const editBtn = ov.querySelector('#editBtn');
     if(editBtn) editBtn.onclick = () => { state.view = 'edit'; render(); };
 
+    const btnPreviewWhatsApp = ov.querySelector('#btnPreviewWhatsApp');
+    if(btnPreviewWhatsApp) btnPreviewWhatsApp.onclick = () => {
+      const c = getClient(state.activeId);
+      const texto = buildLembreteTreinoTexto(c);
+      state.modal = { type: 'previewWhatsApp', id: state.activeId, texto };
+      showModal();
+    };
+
     const btnTreino = ov.querySelector('#btnRegistarTreino');
     if(btnTreino) btnTreino.onclick = () => { state.modal = {type:'treino', id: state.activeId}; showModal(); };
 
@@ -2812,6 +2870,27 @@
       state.modal = null;
       showToast(`${ids.length} caderneta(s) renovada(s)`);
       render();
+    };
+
+    const modalRegenerarFrase = mb.querySelector('#modalRegenerarFrase');
+    if(modalRegenerarFrase) modalRegenerarFrase.onclick = () => {
+      const c = getClient(state.modal.id);
+      state.modal.texto = buildLembreteTreinoTexto(c);
+      showModal();
+    };
+
+    const modalEnviarWhatsApp = mb.querySelector('#modalEnviarWhatsApp');
+    if(modalEnviarWhatsApp) modalEnviarWhatsApp.onclick = () => {
+      const c = getClient(state.modal.id);
+      const texto = mb.querySelector('#m_whatsappTexto').value;
+      const link = buildWhatsAppLink(c, texto);
+      if(link){
+        window.open(link, '_blank');
+        state.modal = null;
+        render();
+      } else {
+        showToast('Este cliente não tem contacto guardado');
+      }
     };
 
     const confirmEditCaderneta = mb.querySelector('#modalConfirmEditCaderneta');
@@ -2980,6 +3059,46 @@
     return String(s??'').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
   }
   function escapeAttr(s){ return escapeHtml(s); }
+
+  // Deslizar para o lado nos três separadores principais avança/recua entre eles
+  // (Dashboard <-> Clientes <-> Finanças), tal como um app nativo no Android.
+  (function setupSwipeNav(){
+    const ORDEM_SEPARADORES = ['dashboard', 'list', 'financas'];
+    let touchStartX = 0, touchStartY = 0, touchActive = false;
+    root.addEventListener('touchstart', (e) => {
+      if(e.touches.length !== 1) return;
+      touchActive = ORDEM_SEPARADORES.includes(state.view) || state.view === 'detail';
+      touchStartX = e.touches[0].clientX;
+      touchStartY = e.touches[0].clientY;
+    }, { passive: true });
+    root.addEventListener('touchend', (e) => {
+      if(!touchActive) return;
+      touchActive = false;
+      const touch = e.changedTouches[0];
+      const dx = touch.clientX - touchStartX;
+      const dy = touch.clientY - touchStartY;
+      if(Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.5) return; // não é um deslize horizontal claro
+
+      if(state.view === 'detail'){
+        if(dx < 0){ // deslizar para a esquerda fecha a ficha do cliente
+          state.view = 'list';
+          state.activeId = null;
+          render();
+        }
+        return;
+      }
+
+      const idx = ORDEM_SEPARADORES.indexOf(state.view);
+      if(idx === -1) return;
+      if(dx < 0 && idx < ORDEM_SEPARADORES.length - 1){
+        state.view = ORDEM_SEPARADORES[idx + 1];
+        render();
+      } else if(dx > 0 && idx > 0){
+        state.view = ORDEM_SEPARADORES[idx - 1];
+        render();
+      }
+    }, { passive: true });
+  })();
 
   initGoogleAuth();
   loadData().then(() => tryAutoConnectGoogle());
