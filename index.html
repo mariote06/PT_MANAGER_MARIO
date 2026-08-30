@@ -1816,18 +1816,24 @@
     const currentKey = monthKey(todayISO());
     const endKey = addMonths(currentKey, 3);
 
-    const clientesRows = state.clients.slice().sort((a,b)=>a.nome.localeCompare(b.nome)).map(c => ({
-      'Código': c.id,
-      'Nome': c.nome,
-      'Tipo': c.tipo,
-      'Atividade': c.atividade,
-      'Serviço': c.servico,
-      'Validade': c.cicloValidade,
-      'Sessões Esperadas': c.sessoesEsperadas,
-      'Sessões Feitas (ciclo atual)': cycleTrainedCount(c),
-    }));
+    const clientesRows = state.clients.slice().sort((a,b)=>a.nome.localeCompare(b.nome)).map(c => {
+      const pagamentosExterno = c.tipo === 'Externo' ? (c.pagamentos||[]).slice().sort((a,b)=>a.data.localeCompare(b.data)) : [];
+      return {
+        'Código': c.id,
+        'Nome': c.nome,
+        'Tipo': c.tipo,
+        'Atividade': c.atividade,
+        'Serviço': c.servico,
+        'Validade': c.cicloValidade,
+        'Sessões Esperadas': c.sessoesEsperadas,
+        'Sessões Feitas (ciclo atual)': cycleTrainedCount(c),
+        'Data Pagamento': pagamentosExterno.map(p => fmtDateShort(p.data)).join('; '),
+        'Valor Pago (€)': pagamentosExterno.map(p => Number(p.valor||0).toFixed(2)).join('; '),
+        'Cadernetas Cobertas': pagamentosExterno.map(p => p.cadernetas||1).join('; '),
+      };
+    });
     const wsClientes = XLSX.utils.json_to_sheet(clientesRows);
-    wsClientes['!cols'] = [{wch:10},{wch:28},{wch:9},{wch:26},{wch:16},{wch:12},{wch:16},{wch:22}];
+    wsClientes['!cols'] = [{wch:10},{wch:28},{wch:9},{wch:26},{wch:16},{wch:12},{wch:16},{wch:22},{wch:26},{wch:20},{wch:18}];
     XLSX.utils.book_append_sheet(wb, wsClientes, 'Clientes');
 
     let treinosRows = [];
@@ -1840,18 +1846,6 @@
     const wsTreinos = XLSX.utils.json_to_sheet(treinosRows);
     wsTreinos['!cols'] = [{wch:28},{wch:9},{wch:12},{wch:30}];
     XLSX.utils.book_append_sheet(wb, wsTreinos, 'Treinos Dados');
-
-    let pagamentosRows = [];
-    state.clients.forEach(c => {
-      if(c.tipo !== 'Externo') return;
-      (c.pagamentos||[]).forEach(p => {
-        pagamentosRows.push({ 'Cliente': c.nome, 'Tipo': c.tipo, 'Data': p.data, 'Valor (€)': Number(p.valor||0), 'Cadernetas Cobertas': p.cadernetas||1 });
-      });
-    });
-    pagamentosRows.sort((a,b) => a.Data.localeCompare(b.Data));
-    const wsPagamentos = XLSX.utils.json_to_sheet(pagamentosRows);
-    wsPagamentos['!cols'] = [{wch:28},{wch:9},{wch:12},{wch:12},{wch:16}];
-    XLSX.utils.book_append_sheet(wb, wsPagamentos, 'PT Externos');
 
     let resumoRows = [];
     for(let key = '2026-08'; key <= endKey; key = addMonths(key, 1)){
