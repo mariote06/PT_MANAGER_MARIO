@@ -1651,9 +1651,10 @@
     let all = [];
     state.clients.forEach(c => {
       if(c.concentrarComprasNoMes){
-        // Opção "concentrar no mês da compra": conta a totalidade das sessões pagas
-        // (nº de cadernetas cobertas x sessões esperadas) de uma vez, no mês em que
-        // o pagamento foi feito — em vez de espalhar pelas cadernetas normais.
+        // Opção "concentrar no mês da compra" (só faz sentido em clientes Externos):
+        // conta a totalidade das sessões pagas (nº de cadernetas cobertas x sessões
+        // esperadas) de uma vez, no mês em que o pagamento foi feito — em vez de
+        // espalhar pelas cadernetas normais.
         (c.pagamentos||[]).forEach(p => {
           if(p.data >= start && p.data <= end){
             const cadernetas = p.cadernetas || 1;
@@ -2542,11 +2543,13 @@
           <input type="date" id="f_pagoAte" value="${c.pagoAte||''}">
           <p style="color:var(--text-muted);font-size:12px;margin:8px 0 0">Se o cliente pagar várias cadernetas de uma vez (ex: 6 de seguida), define aqui até quando já está pago. A previsão de receita em Finanças deixa de contar as renovações até essa data como dinheiro novo — as renovações continuam a funcionar normalmente para efeitos de treinos.</p>
 
-          <label style="display:flex;align-items:center;gap:8px;margin-top:14px">
-            <input type="checkbox" id="f_concentrarComprasNoMes" ${c.concentrarComprasNoMes?'checked':''} style="width:auto">
-            <span>Concentrar treinos comprados no mês do pagamento</span>
-          </label>
-          <p style="color:var(--text-muted);font-size:12px;margin:6px 0 0">Só afeta o separador Treinos/Mês. Em vez de espalhar as sessões pelas cadernetas normais, conta a totalidade (nº de cadernetas do pagamento × sessões esperadas) de uma só vez, no mês em que o pagamento foi registado. Útil para pacotes grandes comprados de uma vez.</p>
+          <div id="f_concentrarWrap" style="display:${c.tipo==='Externo'?'block':'none'}">
+            <label style="display:flex;align-items:center;gap:8px;margin-top:14px">
+              <input type="checkbox" id="f_concentrarComprasNoMes" ${c.concentrarComprasNoMes?'checked':''} style="width:auto">
+              <span>Concentrar treinos comprados no mês do pagamento</span>
+            </label>
+            <p style="color:var(--text-muted);font-size:12px;margin:6px 0 0">Só afeta o separador Treinos/Mês. Em vez de espalhar as sessões pelas cadernetas normais, conta a totalidade (nº de cadernetas do pagamento × sessões esperadas) de uma só vez, no mês em que o pagamento foi registado. Útil para pacotes grandes comprados de uma vez por clientes Externos.</p>
+          </div>
         </div>
 
         <button class="btn btn-primary" id="btnSaveClient">${isEdit?'Guardar alterações':'Adicionar cliente'}</button>
@@ -3005,7 +3008,7 @@
         servico: ov.querySelector('#f_servico').value,
         valorCaderneta: parseFloat(ov.querySelector('#f_valorCaderneta').value) || 0,
         pagoAte: ov.querySelector('#f_pagoAte').value || '',
-        concentrarComprasNoMes: ov.querySelector('#f_concentrarComprasNoMes').checked,
+        concentrarComprasNoMes: ov.querySelector('#f_concentrarComprasNoMes') ? ov.querySelector('#f_concentrarComprasNoMes').checked : false,
       };
       if(state.view === 'edit'){
         const c = getClient(state.activeId);
@@ -3042,6 +3045,15 @@
       });
       const sessoesInput = ov.querySelector('#f_sessoes');
       if(sessoesInput) sessoesInput.addEventListener('input', () => sessoesInput.dataset.touched = '1');
+    }
+
+    // mostra a opção "concentrar compras no mês" só quando o Tipo é Externo
+    const tipoSelect = ov.querySelector('#f_tipo');
+    const concentrarWrap = ov.querySelector('#f_concentrarWrap');
+    if(tipoSelect && concentrarWrap){
+      tipoSelect.addEventListener('change', () => {
+        concentrarWrap.style.display = tipoSelect.value === 'Externo' ? 'block' : 'none';
+      });
     }
 
     // auto-suggest valor da caderneta a partir do serviço (PT 60 = 34€/sessão, PT 30 = 23€/sessão)
