@@ -1696,19 +1696,21 @@
     s.porCliente.forEach(v => { comissaoInterno += v.comissaoInterno; comissaoExterno += v.comissaoExterno; });
 
     // Lista de clientes com sessões neste mês (cadernetas renovadas/iniciadas no mês em referência)
-    const rows = [];
+    const rowsInterno = [], rowsExterno = [];
     state.clients.forEach(c => {
       const v = s.porCliente.get(c.id);
       if(v && (v.sessoesInterno + v.sessoesExterno) > 0){
-        rows.push({
+        const row = {
           c,
           sessoes: v.sessoesInterno + v.sessoesExterno,
           comissaoInterno: v.comissaoInterno,
           comissaoExterno: v.comissaoExterno
-        });
+        };
+        if(c.tipo === 'Externo') rowsExterno.push(row); else rowsInterno.push(row);
       }
     });
-    rows.sort((a,b) => b.sessoes - a.sessoes);
+    rowsInterno.sort((a,b) => b.sessoes - a.sessoes);
+    rowsExterno.sort((a,b) => b.sessoes - a.sessoes);
 
     // Dinheiro que entra no mês: pagamentos realmente registados (Pagamentos/Mês)
     const pm = computePagamentosMes(key);
@@ -1724,12 +1726,21 @@
     const ptGroup60Interno = s.porServicoTipo['PT Group 60_Interno'] || 0;
     const ptGroup60Externo = s.porServicoTipo['PT Group 60_Externo'] || 0;
 
+    // Treinos DADOS de verdade nesse mês (data real do treino), não sessões compradas
+    const [start, end] = monthRange(key);
+    let treinosDadosInterno = 0, treinosDadosExterno = 0;
+    state.clients.forEach(c => {
+      const n = (c.treinos||[]).filter(t => t.data >= start && t.data <= end).length;
+      if(c.tipo === 'Externo') treinosDadosExterno += n; else treinosDadosInterno += n;
+    });
+
     return {
       total: s.total, internoCount: s.internoCount, externoCount: s.externoCount, patamar: s.patamar,
       comissaoInterno, comissaoExterno, isentos: s.isentos,
       totalRecebidoMes, valorRecebidoExterno, valorLiquidoExterno,
       pt30Interno, pt30Externo, pt60Interno, pt60Externo, ptGroup60Interno, ptGroup60Externo,
-      rows
+      treinosDadosInterno, treinosDadosExterno, treinosDadosTotal: treinosDadosInterno + treinosDadosExterno,
+      rowsInterno, rowsExterno
     };
   }
 
@@ -2184,6 +2195,7 @@
 
   function renderTreinosMesBody(key){
     const s = computeTreinosMes(key);
+    const patamarLabel = s.patamar==='alto' ? `≥ ${PATAMAR_INTERNO} (majorada)` : `&lt; ${PATAMAR_INTERNO}`;
     return `
       <div class="card">
         <h3>Treinos comprados</h3>
@@ -2195,11 +2207,23 @@
         <div class="field-row"><span class="k">PT Group 60 — Externo</span><span class="v">${s.ptGroup60Externo}</span></div>
       </div>
       <div class="card">
+        <h3>Treinos dados</h3>
+        <div class="field-row"><span class="k">Total de sessões</span><span class="v">${s.treinosDadosTotal}</span></div>
+        <div class="field-row"><span class="k">Interno</span><span class="v">${s.treinosDadosInterno}</span></div>
+        <div class="field-row"><span class="k">Externo</span><span class="v">${s.treinosDadosExterno}</span></div>
+      </div>
+      <div class="card">
         <h3>Resumo de treinos</h3>
         <div class="field-row"><span class="k">Total de sessões</span><span class="v">${s.total}</span></div>
         <div class="field-row"><span class="k">Interno</span><span class="v">${s.internoCount}</span></div>
         <div class="field-row"><span class="k">Externo</span><span class="v">${s.externoCount}</span></div>
-        <div class="field-row"><span class="k">Patamar comissão</span><span class="v">${s.patamar==='alto'?`≥ ${PATAMAR_INTERNO} (majorada)`:`&lt; ${PATAMAR_INTERNO}`}</span></div>
+      </div>
+      <div class="card">
+        <h3>Patamar e valores por sessão</h3>
+        <div class="field-row"><span class="k">Patamar comissão</span><span class="v">${patamarLabel}</span></div>
+        <div class="field-row" style="border-top:1px solid var(--line);margin-top:6px;padding-top:8px"><span class="k">PT 60 (Interno)</span><span class="v">${(COMISSOES['PT 60']||{})[s.patamar]?.toFixed(2)}€</span></div>
+        <div class="field-row"><span class="k">PT 30 (Interno)</span><span class="v">${(COMISSOES['PT 30']||{})[s.patamar]?.toFixed(2)}€</span></div>
+        <div class="field-row"><span class="k">PT Group 60 (Interno)</span><span class="v">${(COMISSOES['PT Group 60']||{})[s.patamar]?.toFixed(2)}€</span></div>
       </div>
       <div class="card">
         <h3>PT Interno</h3>
@@ -2215,22 +2239,34 @@
         </div>
       </div>
       <div class="card">
-        <h3>Clientes com cadernetas neste mês</h3>
-        ${s.rows.length === 0 ? '<div class="empty-state">Nenhuma caderneta começa neste mês.</div>' :
-          s.rows.map(r => `
+        <h3>Clientes com cadernetas neste mês — Interno</h3>
+        ${s.rowsInterno.length === 0 ? '<div class="empty-state">Nenhum cliente interno com caderneta neste mês.</div>' :
+          s.rowsInterno.map(r => `
             <div class="list-item" style="display:block">
               <div style="display:flex;justify-content:space-between">
-                <span>${escapeHtml(r.c.nome)} <span class="badge-tipo ${r.c.tipo==='Externo'?'externo':'interno'}">${r.c.tipo}</span></span>
-                <span class="mono">${r.sessoes} sessões</span>
+                <span>${escapeHtml(r.c.nome)}</span>
+                <span class="mono">${r.sessoes}</span>
               </div>
-              <div style="font-size:11px;color:var(--text-dim);margin-top:2px">
-                ${r.c.tipo==='Externo' ? `Comissão a pagar ao ginásio: ${r.comissaoExterno.toFixed(2)}€` : `Comissão a receber: ${r.comissaoInterno.toFixed(2)}€`}
-              </div>
+              <div style="font-size:11px;color:var(--text-dim);margin-top:2px">Comissão a receber: ${r.comissaoInterno.toFixed(2)}€</div>
             </div>
           `).join('')
         }
       </div>
-      <div class="empty-state" style="text-align:left">Sessões contadas por cadernetas renovadas (sexta-feira) neste mês, não por data de treino. "Dinheiro recebido" vem dos pagamentos realmente registados. Patamar: &lt; ${PATAMAR_INTERNO} / ≥ ${PATAMAR_INTERNO} sessões combinadas; sessões externas acima de ${ISENCAO_EXTERNO}/mês ficam isentas de comissão, começando pelas de menor valor.</div>
+      <div class="card">
+        <h3>Clientes com cadernetas neste mês — Externo</h3>
+        ${s.rowsExterno.length === 0 ? '<div class="empty-state">Nenhum cliente externo com caderneta neste mês.</div>' :
+          s.rowsExterno.map(r => `
+            <div class="list-item" style="display:block">
+              <div style="display:flex;justify-content:space-between">
+                <span>${escapeHtml(r.c.nome)}</span>
+                <span class="mono">${r.sessoes}</span>
+              </div>
+              <div style="font-size:11px;color:var(--text-dim);margin-top:2px">Comissão a pagar ao ginásio: ${r.comissaoExterno.toFixed(2)}€</div>
+            </div>
+          `).join('')
+        }
+      </div>
+      <div class="empty-state" style="text-align:left">"Treinos comprados"/"Resumo" contam sessões esperadas de cadernetas que começam neste mês; "Treinos dados" conta os treinos com data real registada neste mês. Patamar: &lt; ${PATAMAR_INTERNO} / ≥ ${PATAMAR_INTERNO} sessões combinadas; sessões externas acima de ${ISENCAO_EXTERNO}/mês ficam isentas de comissão, começando pelas de menor valor.</div>
     `;
   }
 
