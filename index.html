@@ -820,6 +820,7 @@
     if(c.inicioCadernetaAtual === undefined) c.inicioCadernetaAtual = addDays(c.cicloValidade, -28);
     if(c.autoRenovar === undefined) c.autoRenovar = false;
     if(c.proximoTreino === undefined) c.proximoTreino = null;
+    if(c.concentrarComprasNoMes === undefined) c.concentrarComprasNoMes = false;
     return c;
   }
 
@@ -828,7 +829,8 @@
     nome: 'Nome', sexo: 'Sexo', nascimento: 'Nascimento', contacto: 'Contacto', email: 'Email',
     atividade: 'Atividade', sessoesEsperadas: 'Sessões esperadas', cicloInicio: 'Início do Serviço',
     cicloValidade: 'Validade', tipo: 'Tipo', servico: 'Serviço', valorCaderneta: 'Valor da caderneta',
-    corGoogle: 'Cor no Google Calendar', inicioCadernetaAtual: 'Início da Caderneta', pagoAte: 'Pago adiantado até'
+    corGoogle: 'Cor no Google Calendar', inicioCadernetaAtual: 'Início da Caderneta', pagoAte: 'Pago adiantado até',
+    concentrarComprasNoMes: 'Concentrar compras no mês do pagamento'
   };
   function formatChangeValue(campo, val){
     if(campo === 'cicloValidade'){
@@ -1648,6 +1650,21 @@
     const [start, end] = monthRange(key);
     let all = [];
     state.clients.forEach(c => {
+      if(c.concentrarComprasNoMes){
+        // Opção "concentrar no mês da compra": conta a totalidade das sessões pagas
+        // (nº de cadernetas cobertas x sessões esperadas) de uma vez, no mês em que
+        // o pagamento foi feito — em vez de espalhar pelas cadernetas normais.
+        (c.pagamentos||[]).forEach(p => {
+          if(p.data >= start && p.data <= end){
+            const cadernetas = p.cadernetas || 1;
+            const sessoes = (c.sessoesEsperadas || 0) * cadernetas;
+            for(let i = 0; i < sessoes; i++){
+              all.push({ client: c, servico: c.servico, tipo: c.tipo });
+            }
+          }
+        });
+        return;
+      }
       const dates = receitaDatesInMonthForClient(c, start, end);
       dates.forEach(() => {
         const sessoes = c.sessoesEsperadas || 0;
@@ -2524,6 +2541,12 @@
           <label>Pago adiantado até (opcional)</label>
           <input type="date" id="f_pagoAte" value="${c.pagoAte||''}">
           <p style="color:var(--text-muted);font-size:12px;margin:8px 0 0">Se o cliente pagar várias cadernetas de uma vez (ex: 6 de seguida), define aqui até quando já está pago. A previsão de receita em Finanças deixa de contar as renovações até essa data como dinheiro novo — as renovações continuam a funcionar normalmente para efeitos de treinos.</p>
+
+          <label style="display:flex;align-items:center;gap:8px;margin-top:14px">
+            <input type="checkbox" id="f_concentrarComprasNoMes" ${c.concentrarComprasNoMes?'checked':''} style="width:auto">
+            <span>Concentrar treinos comprados no mês do pagamento</span>
+          </label>
+          <p style="color:var(--text-muted);font-size:12px;margin:6px 0 0">Só afeta o separador Treinos/Mês. Em vez de espalhar as sessões pelas cadernetas normais, conta a totalidade (nº de cadernetas do pagamento × sessões esperadas) de uma só vez, no mês em que o pagamento foi registado. Útil para pacotes grandes comprados de uma vez.</p>
         </div>
 
         <button class="btn btn-primary" id="btnSaveClient">${isEdit?'Guardar alterações':'Adicionar cliente'}</button>
@@ -2982,6 +3005,7 @@
         servico: ov.querySelector('#f_servico').value,
         valorCaderneta: parseFloat(ov.querySelector('#f_valorCaderneta').value) || 0,
         pagoAte: ov.querySelector('#f_pagoAte').value || '',
+        concentrarComprasNoMes: ov.querySelector('#f_concentrarComprasNoMes').checked,
       };
       if(state.view === 'edit'){
         const c = getClient(state.activeId);
