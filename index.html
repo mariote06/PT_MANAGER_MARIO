@@ -1848,18 +1848,23 @@
     XLSX.utils.book_append_sheet(wb, wsTreinos, 'Treinos Dados');
 
     let resumoRows = [];
-    for(let key = '2026-08'; key <= endKey; key = addMonths(key, 1)){
+    for(let key = '2026-07'; key <= endKey; key = addMonths(key, 1)){
       const t = computeTreinosMes(key);
       const r = computeReceitaMes(key);
+      const pm = computePagamentosMes(key);
       resumoRows.push({
         'Mês': monthLabel(key),
-        'Total Recebido (€)': Number(t.totalRecebidoMes.toFixed(2)),
+        'Nº Pagamentos': pm.rows.length,
+        'Cadernetas Pagas': pm.totalCadernetas,
+        'Sessões Pagas': pm.totalSessoes,
+        'Valor Recebido Interno (€)': Number(pm.totalInterno.toFixed(2)),
+        'Valor Recebido Externo (€)': Number(pm.totalExterno.toFixed(2)),
+        'Valor Total Recebido (€)': Number(pm.totalValor.toFixed(2)),
         'Treinos Interno': t.internoCount,
         'Treinos Externo': t.externoCount,
         'Treinos Total': t.total,
         'Patamar Comissão': t.patamar === 'alto' ? `>= ${PATAMAR_INTERNO}` : `< ${PATAMAR_INTERNO}`,
         'Comissão Interno (€)': Number(t.comissaoInterno.toFixed(2)),
-        'Valor Recebido Externo (€)': Number(t.valorRecebidoExterno.toFixed(2)),
         'Comissão a Pagar Externo (€)': Number(t.comissaoExterno.toFixed(2)),
         'Valor Líquido Externo (€)': Number(t.valorLiquidoExterno.toFixed(2)),
         'Receita Prevista Interno (€)': Number(r.totalInterno.toFixed(2)),
@@ -1868,25 +1873,8 @@
       });
     }
     const wsResumo = XLSX.utils.json_to_sheet(resumoRows);
-    wsResumo['!cols'] = [{wch:14},{wch:15},{wch:15},{wch:13},{wch:16},{wch:22},{wch:20},{wch:20},{wch:20},{wch:18}];
+    wsResumo['!cols'] = [{wch:14},{wch:14},{wch:15},{wch:13},{wch:20},{wch:20},{wch:20},{wch:15},{wch:15},{wch:13},{wch:16},{wch:20},{wch:20},{wch:20},{wch:20},{wch:20},{wch:18}];
     XLSX.utils.book_append_sheet(wb, wsResumo, 'Resumo Mensal');
-
-    let pagamentosMesRows = [];
-    for(let key = '2026-07'; key <= endKey; key = addMonths(key, 1)){
-      const pm = computePagamentosMes(key);
-      pagamentosMesRows.push({
-        'Mês': monthLabel(key),
-        'Nº Pagamentos': pm.rows.length,
-        'Cadernetas Pagas': pm.totalCadernetas,
-        'Sessões Pagas': pm.totalSessoes,
-        'Valor Interno (€)': Number(pm.totalInterno.toFixed(2)),
-        'Valor Externo (€)': Number(pm.totalExterno.toFixed(2)),
-        'Valor Total Recebido (€)': Number(pm.totalValor.toFixed(2)),
-      });
-    }
-    const wsPagamentosMes = XLSX.utils.json_to_sheet(pagamentosMesRows);
-    wsPagamentosMes['!cols'] = [{wch:14},{wch:14},{wch:15},{wch:13},{wch:16},{wch:16},{wch:20}];
-    XLSX.utils.book_append_sheet(wb, wsPagamentosMes, 'Pagamentos Mensal');
 
     // Uma folha por mês, com o detalhe de cadernetas: início, término, prolongamentos,
     // alterações feitas nesse mês e treinos contratados por caderneta.
@@ -2094,7 +2082,7 @@
     const reportHtml = `
       <div class="card">
         <h3>Relatório Excel</h3>
-        <p style="color:var(--text-muted);font-size:12.5px;margin:0 0 12px">Gera um ficheiro .xlsx com folhas separadas: Clientes, Treinos, Pagamentos e Resumo Mensal (últimos 6 meses e próximos 3).</p>
+        <p style="color:var(--text-muted);font-size:12.5px;margin:0 0 12px">Gera um ficheiro .xlsx com folhas separadas: Clientes, Treinos Dados e Resumo Mensal (últimos 6 meses e próximos 3).</p>
         <button class="btn btn-primary" id="btnExportRelatorio">Exportar relatório (.xlsx)</button>
       </div>
     `;
