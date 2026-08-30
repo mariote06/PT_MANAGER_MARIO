@@ -1813,26 +1813,21 @@
   // ---------- RELATÓRIO EXCEL ----------
   function buildRelatorioWorkbook(){
     const wb = XLSX.utils.book_new();
+    const currentKey = monthKey(todayISO());
+    const endKey = addMonths(currentKey, 3);
 
     const clientesRows = state.clients.slice().sort((a,b)=>a.nome.localeCompare(b.nome)).map(c => ({
       'Código': c.id,
       'Nome': c.nome,
       'Tipo': c.tipo,
-      'Sexo': c.sexo,
-      'Nascimento': c.nascimento,
-      'Contacto': c.contacto,
-      'Email': c.email,
       'Atividade': c.atividade,
       'Serviço': c.servico,
-      'Valor Caderneta (€)': Number(c.valorCaderneta||0),
-      'Início Ciclo': c.cicloInicio,
       'Validade': c.cicloValidade,
       'Sessões Esperadas': c.sessoesEsperadas,
       'Sessões Feitas (ciclo atual)': cycleTrainedCount(c),
-      'Status': c.status || ''
     }));
     const wsClientes = XLSX.utils.json_to_sheet(clientesRows);
-    wsClientes['!cols'] = [{wch:10},{wch:28},{wch:9},{wch:6},{wch:12},{wch:13},{wch:26},{wch:26},{wch:16},{wch:14},{wch:12},{wch:12},{wch:14},{wch:16},{wch:14}];
+    wsClientes['!cols'] = [{wch:10},{wch:28},{wch:9},{wch:26},{wch:16},{wch:12},{wch:16},{wch:22}];
     XLSX.utils.book_append_sheet(wb, wsClientes, 'Clientes');
 
     let treinosRows = [];
@@ -1844,23 +1839,22 @@
     treinosRows.sort((a,b) => a.Data.localeCompare(b.Data));
     const wsTreinos = XLSX.utils.json_to_sheet(treinosRows);
     wsTreinos['!cols'] = [{wch:28},{wch:9},{wch:12},{wch:30}];
-    XLSX.utils.book_append_sheet(wb, wsTreinos, 'Treinos');
+    XLSX.utils.book_append_sheet(wb, wsTreinos, 'Treinos Dados');
 
     let pagamentosRows = [];
     state.clients.forEach(c => {
+      if(c.tipo !== 'Externo') return;
       (c.pagamentos||[]).forEach(p => {
-        pagamentosRows.push({ 'Cliente': c.nome, 'Tipo': c.tipo, 'Data': p.data, 'Valor (€)': Number(p.valor||0), 'Cadernetas Cobertas': p.cadernetas||1, 'Nº da(s) Caderneta(s)': p.cadernetaRef||'', 'Nota': p.nota || '' });
+        pagamentosRows.push({ 'Cliente': c.nome, 'Tipo': c.tipo, 'Data': p.data, 'Valor (€)': Number(p.valor||0), 'Cadernetas Cobertas': p.cadernetas||1 });
       });
     });
     pagamentosRows.sort((a,b) => a.Data.localeCompare(b.Data));
     const wsPagamentos = XLSX.utils.json_to_sheet(pagamentosRows);
-    wsPagamentos['!cols'] = [{wch:28},{wch:9},{wch:12},{wch:12},{wch:16},{wch:20},{wch:30}];
-    XLSX.utils.book_append_sheet(wb, wsPagamentos, 'Pagamentos');
+    wsPagamentos['!cols'] = [{wch:28},{wch:9},{wch:12},{wch:12},{wch:16}];
+    XLSX.utils.book_append_sheet(wb, wsPagamentos, 'PT Externos');
 
     let resumoRows = [];
-    const currentKey = monthKey(todayISO());
-    for(let i = -6; i <= 3; i++){
-      const key = addMonths(currentKey, i);
+    for(let key = '2026-08'; key <= endKey; key = addMonths(key, 1)){
       const t = computeTreinosMes(key);
       const r = computeReceitaMes(key);
       resumoRows.push({
@@ -1884,8 +1878,7 @@
     XLSX.utils.book_append_sheet(wb, wsResumo, 'Resumo Mensal');
 
     let pagamentosMesRows = [];
-    for(let i = -6; i <= 3; i++){
-      const key = addMonths(currentKey, i);
+    for(let key = '2026-07'; key <= endKey; key = addMonths(key, 1)){
       const pm = computePagamentosMes(key);
       pagamentosMesRows.push({
         'Mês': monthLabel(key),
@@ -1903,8 +1896,7 @@
 
     // Uma folha por mês, com o detalhe de cadernetas: início, término, prolongamentos,
     // alterações feitas nesse mês e treinos contratados por caderneta.
-    for(let i = -6; i <= 3; i++){
-      const key = addMonths(currentKey, i);
+    for(let key = '2026-07'; key <= endKey; key = addMonths(key, 1)){
       const rows = buildCadernetasMensalRows(key);
       const ws = XLSX.utils.json_to_sheet(rows);
       ws['!cols'] = [{wch:10},{wch:28},{wch:14},{wch:14},{wch:16},{wch:40},{wch:16}];
