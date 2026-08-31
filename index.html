@@ -1815,7 +1815,13 @@
     const totalSessoes = rows.reduce((s,r)=>s+r.sessoes,0);
     const totalInterno = rows.filter(r=>r.c.tipo!=='Externo').reduce((s,r)=>s+r.valor,0);
     const totalExterno = rows.filter(r=>r.c.tipo==='Externo').reduce((s,r)=>s+r.valor,0);
-    return { rows, totalValor, totalCadernetas, totalSessoes, totalInterno, totalExterno };
+    // Só os clientes Externos pagam diretamente ao PT — os Internos pagam ao ginásio,
+    // por isso estes três nunca têm contribuição real de clientes Internos na prática.
+    const rowsExterno = rows.filter(r => r.c.tipo === 'Externo');
+    const nPagamentosExterno = rowsExterno.length;
+    const totalCadernetasExterno = rowsExterno.reduce((s,r)=>s+r.cadernetas,0);
+    const totalSessoesExterno = rowsExterno.reduce((s,r)=>s+r.sessoes,0);
+    return { rows, totalValor, totalCadernetas, totalSessoes, totalInterno, totalExterno, nPagamentosExterno, totalCadernetasExterno, totalSessoesExterno };
   }
 
   // ---------- RELATÓRIO EXCEL ----------
@@ -1943,14 +1949,14 @@
 
     const resumoCols = [
       { header: 'Mês', key: 'mes', width: 14 },
-      { header: 'Nº Pagamentos', key: 'nPagamentos', width: 14 },
-      { header: 'Cadernetas Pagas', key: 'cadernetasPagas', width: 15 },
-      { header: 'Sessões Pagas', key: 'sessoesPagas', width: 13 },
       { header: 'Patamar Comissão', key: 'patamar', width: 16 },
       { header: 'Treinos Interno', key: 'treinosInterno', width: 15 },
       { header: 'Comissão Interno (€)', key: 'comissaoInterno', width: 20 },
       { header: 'Receita Ginásio (€)', key: 'receitaGinasio', width: 18 },
       { header: 'Treinos Externo', key: 'treinosExterno', width: 15 },
+      { header: 'Nº Pagamentos Externo', key: 'nPagamentosExterno', width: 18 },
+      { header: 'Cadernetas Pagas Externo', key: 'cadernetasPagasExterno', width: 20 },
+      { header: 'Sessões Pagas Externo', key: 'sessoesPagasExterno', width: 18 },
       { header: 'Valor Recebido Externo (€)', key: 'valorRecebidoExterno', width: 22 },
       { header: 'Comissão a Pagar Externo (€)', key: 'comissaoPagarExterno', width: 24 },
       { header: 'Valor Líquido Externo (€)', key: 'valorLiquidoExterno', width: 22 },
@@ -1965,9 +1971,9 @@
       const pm = computePagamentosMes(key);
       resumoRows.push({
         mes: monthLabel(key),
-        nPagamentos: pm.rows.length,
-        cadernetasPagas: pm.totalCadernetas,
-        sessoesPagas: pm.totalSessoes,
+        nPagamentosExterno: pm.nPagamentosExterno,
+        cadernetasPagasExterno: pm.totalCadernetasExterno,
+        sessoesPagasExterno: pm.totalSessoesExterno,
         patamar: t.patamar === 'alto' ? `>= ${PATAMAR_INTERNO}` : `< ${PATAMAR_INTERNO}`,
         treinosInterno: t.internoCount,
         comissaoInterno: Number(t.comissaoInterno.toFixed(2)),
