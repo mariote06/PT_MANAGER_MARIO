@@ -1608,11 +1608,18 @@
     return html;
   }
 
-  function renderList(){
+  // Lista de clientes visível (ordenada e filtrada por pesquisa/tipo) — partilhada
+  // entre a lista de clientes e a navegação por swipe na ficha do cliente.
+  function getVisibleClientsOrdered(){
     const q = state.search.trim().toLowerCase();
     let list = state.clients.slice().sort((a,b) => a.nome.localeCompare(b.nome));
     if(q) list = list.filter(c => c.nome.toLowerCase().includes(q) || String(c.id).toLowerCase().includes(q));
     if(state.filterTipo !== 'all') list = list.filter(c => c.tipo === state.filterTipo);
+    return list;
+  }
+
+  function renderList(){
+    const list = getVisibleClientsOrdered();
 
     if(list.length === 0){
       return `<div class="empty-state">Nenhum cliente encontrado.</div>`;
@@ -3279,10 +3286,22 @@
       if(Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.5) return; // não é um deslize horizontal claro
 
       if(state.view === 'detail'){
-        if(dx < 0){ // deslizar para a esquerda fecha a ficha do cliente
-          state.view = 'list';
-          state.activeId = null;
-          render();
+        const list = getVisibleClientsOrdered();
+        const idx = list.findIndex(c => c.id === state.activeId);
+        if(dx < 0){ // deslizar para a esquerda: cliente seguinte, ou volta à lista se for o último
+          if(idx !== -1 && idx < list.length - 1){
+            state.activeId = list[idx + 1].id;
+            render();
+          } else {
+            state.view = 'list';
+            state.activeId = null;
+            render();
+          }
+        } else { // deslizar para a direita: cliente anterior
+          if(idx > 0){
+            state.activeId = list[idx - 1].id;
+            render();
+          }
         }
         return;
       }
