@@ -1818,13 +1818,21 @@
 
     const clientesRows = state.clients.slice().sort((a,b)=>a.nome.localeCompare(b.nome)).map(c => {
       const pagamentosExterno = c.tipo === 'Externo' ? (c.pagamentos||[]).slice().sort((a,b)=>a.data.localeCompare(b.data)) : [];
+      const inicioCad = c.inicioCadernetaAtual || '';
+      const fimSuposto = inicioCad ? addDays(inicioCad, 28) : '';
+      const fimReal = c.cicloValidade || '';
+      const diasProlongamento = (inicioCad && fimReal) ? Math.max(0, daysBetween(fimSuposto, fimReal)) : 0;
+      const semanasProlongamento = Math.round(diasProlongamento / 7);
       return {
         'Código': c.id,
         'Nome': c.nome,
         'Tipo': c.tipo,
         'Atividade': c.atividade,
         'Serviço': c.servico,
-        'Validade': c.cicloValidade,
+        'Início da Caderneta': inicioCad,
+        'Fim Suposto (4 semanas)': fimSuposto,
+        'Prolongamentos (semanas)': semanasProlongamento,
+        'Fim Real (4 semanas + prolongamentos)': fimReal,
         'Sessões Esperadas': c.sessoesEsperadas,
         'Sessões Feitas (ciclo atual)': cycleTrainedCount(c),
         'Data Pagamento': pagamentosExterno.map(p => fmtDateShort(p.data)).join('; '),
@@ -1833,7 +1841,7 @@
       };
     });
     const wsClientes = XLSX.utils.json_to_sheet(clientesRows);
-    wsClientes['!cols'] = [{wch:10},{wch:28},{wch:9},{wch:26},{wch:16},{wch:12},{wch:16},{wch:22},{wch:26},{wch:20},{wch:18}];
+    wsClientes['!cols'] = [{wch:10},{wch:28},{wch:9},{wch:26},{wch:16},{wch:14},{wch:16},{wch:16},{wch:22},{wch:16},{wch:22},{wch:26},{wch:20},{wch:18}];
     XLSX.utils.book_append_sheet(wb, wsClientes, 'Clientes');
 
     let treinosRows = [];
