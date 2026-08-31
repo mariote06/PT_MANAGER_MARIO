@@ -12,6 +12,7 @@
   html, body { margin: 0; padding: 0; background: #0f1115; }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -1818,11 +1819,94 @@
   }
 
   // ---------- RELATÓRIO EXCEL ----------
+  // ---------- ESTILOS DO RELATÓRIO EXCEL (cores + bordas) ----------
+  const COR_HEADER_BG = 'FF1F2937';
+  const COR_HEADER_FONT = 'FFFFFFFF';
+  const COR_PT_BG = 'FFC6EFCE';       // verde: dinheiro que fica contigo
+  const COR_PT_FONT = 'FF006100';
+  const COR_DEVE_BG = 'FFFFC7CE';     // vermelho: dinheiro que deves ao ginásio
+  const COR_DEVE_FONT = 'FF9C0006';
+  const COR_GINASIO_BG = 'FFD9E1F2'; // azul-acinzentado: dinheiro que fica no ginásio
+  const COR_GINASIO_FONT = 'FF1F4E78';
+  const BORDA_FINA = { style: 'thin', color: { argb: 'FFB0B0B0' } };
+  const BORDA_CELULA = { top: BORDA_FINA, left: BORDA_FINA, bottom: BORDA_FINA, right: BORDA_FINA };
+
+  function estiloCabecalhoCelula(cell){
+    cell.font = { bold: true, color: { argb: COR_HEADER_FONT } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COR_HEADER_BG } };
+    cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    cell.border = BORDA_CELULA;
+  }
+
+  const CORES_DINHEIRO = {
+    pt: [COR_PT_BG, COR_PT_FONT],
+    deve: [COR_DEVE_BG, COR_DEVE_FONT],
+    ginasio: [COR_GINASIO_BG, COR_GINASIO_FONT],
+  };
+
+  // Cria uma folha estilizada: cabeçalho escuro, bordas em toda a tabela, linhas
+  // alternadas, e cor por coluna quando essa coluna representa dinheiro (moneyColMap:
+  // { chaveDaColuna: 'pt' | 'deve' | 'ginasio' }).
+  function addStyledSheet(wb, sheetName, columns, rows, moneyColMap){
+    const ws = wb.addWorksheet(sheetName);
+    ws.columns = columns.map(c => ({ header: c.header, key: c.key, width: c.width || 16 }));
+    rows.forEach(r => ws.addRow(r));
+    const headerRow = ws.getRow(1);
+    headerRow.eachCell(cell => estiloCabecalhoCelula(cell));
+    headerRow.height = 28;
+    for(let i = 2; i <= ws.rowCount; i++){
+      const row = ws.getRow(i);
+      row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+        cell.border = BORDA_CELULA;
+        const colDef = columns[colNumber - 1];
+        const tipoCor = colDef && moneyColMap ? moneyColMap[colDef.key] : null;
+        if(tipoCor && CORES_DINHEIRO[tipoCor]){
+          const [bg, font] = CORES_DINHEIRO[tipoCor];
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+          cell.font = { color: { argb: font } };
+        } else if(i % 2 === 0){
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF6F7FA' } };
+        }
+      });
+    }
+    ws.views = [{ state: 'frozen', ySplit: 1 }];
+    return ws;
+  }
+
+  async function downloadWorkbook(wb, filename){
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   function buildRelatorioWorkbook(){
-    const wb = XLSX.utils.book_new();
+    const wb = new ExcelJS.Workbook();
     const currentKey = monthKey(todayISO());
     const endKey = addMonths(currentKey, 3);
 
+    const clientesCols = [
+      { header: 'Código', key: 'codigo', width: 10 },
+      { header: 'Nome', key: 'nome', width: 28 },
+      { header: 'Tipo', key: 'tipo', width: 9 },
+      { header: 'Atividade', key: 'atividade', width: 26 },
+      { header: 'Serviço', key: 'servico', width: 16 },
+      { header: 'Início da Caderneta', key: 'inicio', width: 15 },
+      { header: 'Fim Suposto (4 semanas)', key: 'fimSuposto', width: 16 },
+      { header: 'Prolongamentos (semanas)', key: 'prolongamentos', width: 16 },
+      { header: 'Fim Real (4 semanas + prolongamentos)', key: 'fimReal', width: 22 },
+      { header: 'Sessões Esperadas', key: 'sessoesEsperadas', width: 15 },
+      { header: 'Sessões Feitas (ciclo atual)', key: 'sessoesFeitas', width: 22 },
+      { header: 'Data Pagamento', key: 'dataPagamento', width: 26 },
+      { header: 'Valor Pago (€)', key: 'valorPago', width: 18 },
+      { header: 'Cadernetas Cobertas', key: 'cadernetasCobertas', width: 18 },
+    ];
     const clientesRows = state.clients.slice().sort((a,b)=>a.nome.localeCompare(b.nome)).map(c => {
       const pagamentosExterno = c.tipo === 'Externo' ? (c.pagamentos||[]).slice().sort((a,b)=>a.data.localeCompare(b.data)) : [];
       const inicioCad = c.inicioCadernetaAtual || '';
@@ -1831,72 +1915,96 @@
       const diasProlongamento = (inicioCad && fimReal) ? Math.max(0, daysBetween(fimSuposto, fimReal)) : 0;
       const semanasProlongamento = Math.round(diasProlongamento / 7);
       return {
-        'Código': c.id,
-        'Nome': c.nome,
-        'Tipo': c.tipo,
-        'Atividade': c.atividade,
-        'Serviço': c.servico,
-        'Início da Caderneta': inicioCad,
-        'Fim Suposto (4 semanas)': fimSuposto,
-        'Prolongamentos (semanas)': semanasProlongamento,
-        'Fim Real (4 semanas + prolongamentos)': fimReal,
-        'Sessões Esperadas': c.sessoesEsperadas,
-        'Sessões Feitas (ciclo atual)': cycleTrainedCount(c),
-        'Data Pagamento': pagamentosExterno.map(p => fmtDateShort(p.data)).join('; '),
-        'Valor Pago (€)': pagamentosExterno.map(p => Number(p.valor||0).toFixed(2)).join('; '),
-        'Cadernetas Cobertas': pagamentosExterno.map(p => p.cadernetas||1).join('; '),
+        codigo: c.id, nome: c.nome, tipo: c.tipo, atividade: c.atividade, servico: c.servico,
+        inicio: inicioCad, fimSuposto, prolongamentos: semanasProlongamento, fimReal,
+        sessoesEsperadas: c.sessoesEsperadas, sessoesFeitas: cycleTrainedCount(c),
+        dataPagamento: pagamentosExterno.map(p => fmtDateShort(p.data)).join('; '),
+        valorPago: pagamentosExterno.map(p => Number(p.valor||0).toFixed(2)).join('; '),
+        cadernetasCobertas: pagamentosExterno.map(p => p.cadernetas||1).join('; '),
       };
     });
-    const wsClientes = XLSX.utils.json_to_sheet(clientesRows);
-    wsClientes['!cols'] = [{wch:10},{wch:28},{wch:9},{wch:26},{wch:16},{wch:14},{wch:16},{wch:16},{wch:22},{wch:16},{wch:22},{wch:26},{wch:20},{wch:18}];
-    XLSX.utils.book_append_sheet(wb, wsClientes, 'Clientes');
+    addStyledSheet(wb, 'Clientes', clientesCols, clientesRows);
 
+    const treinosCols = [
+      { header: 'Cliente', key: 'cliente', width: 28 },
+      { header: 'Tipo', key: 'tipo', width: 9 },
+      { header: 'Data', key: 'data', width: 12 },
+      { header: 'Hora', key: 'hora', width: 8 },
+      { header: 'Nota', key: 'nota', width: 30 },
+    ];
     let treinosRows = [];
     state.clients.forEach(c => {
       (c.treinos||[]).forEach(t => {
-        treinosRows.push({ 'Cliente': c.nome, 'Tipo': c.tipo, 'Data': t.data, 'Hora': t.hora || '', 'Nota': t.nota || '' });
+        treinosRows.push({ cliente: c.nome, tipo: c.tipo, data: t.data, hora: t.hora || '', nota: t.nota || '' });
       });
     });
-    treinosRows.sort((a,b) => a.Data.localeCompare(b.Data));
-    const wsTreinos = XLSX.utils.json_to_sheet(treinosRows);
-    wsTreinos['!cols'] = [{wch:28},{wch:9},{wch:12},{wch:8},{wch:30}];
-    XLSX.utils.book_append_sheet(wb, wsTreinos, 'Treinos Dados');
+    treinosRows.sort((a,b) => a.data.localeCompare(b.data));
+    addStyledSheet(wb, 'Treinos Dados', treinosCols, treinosRows);
 
+    const resumoCols = [
+      { header: 'Mês', key: 'mes', width: 14 },
+      { header: 'Nº Pagamentos', key: 'nPagamentos', width: 14 },
+      { header: 'Cadernetas Pagas', key: 'cadernetasPagas', width: 15 },
+      { header: 'Sessões Pagas', key: 'sessoesPagas', width: 13 },
+      { header: 'Patamar Comissão', key: 'patamar', width: 16 },
+      { header: 'Treinos Interno', key: 'treinosInterno', width: 15 },
+      { header: 'Comissão Interno (€)', key: 'comissaoInterno', width: 20 },
+      { header: 'Receita Ginásio (€)', key: 'receitaGinasio', width: 18 },
+      { header: 'Treinos Externo', key: 'treinosExterno', width: 15 },
+      { header: 'Valor Recebido Externo (€)', key: 'valorRecebidoExterno', width: 22 },
+      { header: 'Comissão a Pagar Externo (€)', key: 'comissaoPagarExterno', width: 24 },
+      { header: 'Valor Líquido Externo (€)', key: 'valorLiquidoExterno', width: 22 },
+      { header: 'Receita Prevista Externo (€)', key: 'receitaPrevistaExterno', width: 24 },
+      { header: 'Treinos Total', key: 'treinosTotal', width: 13 },
+      { header: 'Receita Prevista Total (€)', key: 'receitaPrevistaTotal', width: 22 },
+    ];
     let resumoRows = [];
     for(let key = '2026-07'; key <= endKey; key = addMonths(key, 1)){
       const t = computeTreinosMes(key);
       const r = computeReceitaMes(key);
       const pm = computePagamentosMes(key);
       resumoRows.push({
-        'Mês': monthLabel(key),
-        'Nº Pagamentos': pm.rows.length,
-        'Cadernetas Pagas': pm.totalCadernetas,
-        'Sessões Pagas': pm.totalSessoes,
-        'Patamar Comissão': t.patamar === 'alto' ? `>= ${PATAMAR_INTERNO}` : `< ${PATAMAR_INTERNO}`,
-        'Treinos Interno': t.internoCount,
-        'Comissão Interno (€)': Number(t.comissaoInterno.toFixed(2)),
-        'Receita Ginásio (€)': Number(r.totalInterno.toFixed(2)),
-        'Treinos Externo': t.externoCount,
-        'Valor Recebido Externo (€)': Number(pm.totalExterno.toFixed(2)),
-        'Comissão a Pagar Externo (€)': Number(t.comissaoExterno.toFixed(2)),
-        'Valor Líquido Externo (€)': Number(t.valorLiquidoExterno.toFixed(2)),
-        'Receita Prevista Externo (€)': Number(r.totalExterno.toFixed(2)),
-        'Treinos Total': t.total,
-        'Receita Prevista Total (€)': Number(r.total.toFixed(2)),
+        mes: monthLabel(key),
+        nPagamentos: pm.rows.length,
+        cadernetasPagas: pm.totalCadernetas,
+        sessoesPagas: pm.totalSessoes,
+        patamar: t.patamar === 'alto' ? `>= ${PATAMAR_INTERNO}` : `< ${PATAMAR_INTERNO}`,
+        treinosInterno: t.internoCount,
+        comissaoInterno: Number(t.comissaoInterno.toFixed(2)),
+        receitaGinasio: Number(r.totalInterno.toFixed(2)),
+        treinosExterno: t.externoCount,
+        valorRecebidoExterno: Number(pm.totalExterno.toFixed(2)),
+        comissaoPagarExterno: Number(t.comissaoExterno.toFixed(2)),
+        valorLiquidoExterno: Number(t.valorLiquidoExterno.toFixed(2)),
+        receitaPrevistaExterno: Number(r.totalExterno.toFixed(2)),
+        treinosTotal: t.total,
+        receitaPrevistaTotal: Number(r.total.toFixed(2)),
       });
     }
-    const wsResumo = XLSX.utils.json_to_sheet(resumoRows);
-    wsResumo['!cols'] = [{wch:14},{wch:14},{wch:15},{wch:13},{wch:16},{wch:15},{wch:20},{wch:18},{wch:15},{wch:20},{wch:20},{wch:20},{wch:20},{wch:13},{wch:20}];
-    XLSX.utils.book_append_sheet(wb, wsResumo, 'Resumo Mensal');
+    addStyledSheet(wb, 'Resumo Mensal', resumoCols, resumoRows, {
+      comissaoInterno: 'pt',
+      receitaGinasio: 'ginasio',
+      valorRecebidoExterno: 'pt',
+      comissaoPagarExterno: 'deve',
+      valorLiquidoExterno: 'pt',
+      receitaPrevistaExterno: 'ginasio',
+    });
 
     // Uma folha por mês, com o detalhe de cadernetas: início, término, prolongamentos,
     // alterações feitas nesse mês e treinos contratados por caderneta.
+    const mensalCols = [
+      { header: 'Código', key: 'codigo', width: 10 },
+      { header: 'Nome', key: 'nome', width: 28 },
+      { header: 'Início da Caderneta', key: 'inicio', width: 15 },
+      { header: 'Término', key: 'termino', width: 14 },
+      { header: 'Prolongamentos (semanas)', key: 'prolongamentos', width: 16 },
+      { header: 'Alterações no mês', key: 'alteracoes', width: 40 },
+      { header: 'Treinos Contratados', key: 'treinosContratados', width: 16 },
+    ];
     for(let key = '2026-07'; key <= endKey; key = addMonths(key, 1)){
-      const rows = buildCadernetasMensalRows(key);
-      const ws = XLSX.utils.json_to_sheet(rows);
-      ws['!cols'] = [{wch:10},{wch:28},{wch:14},{wch:14},{wch:16},{wch:40},{wch:16}];
+      const linhas = buildCadernetasMensalRows(key);
       let sheetName = monthLabel(key).replace(/[:\\\/\?\*\[\]]/g, '').slice(0,31);
-      XLSX.utils.book_append_sheet(wb, ws, sheetName);
+      addStyledSheet(wb, sheetName, mensalCols, linhas);
     }
 
     return wb;
@@ -1912,10 +2020,7 @@
       const alteracoesTexto = buildAlteracoesMesTexto(c, start, end);
       if(inicios.length === 0){
         if(alteracoesTexto){
-          rows.push({
-            'Código': c.id, 'Nome': c.nome, 'Início da Caderneta': '', 'Término': '',
-            'Prolongamentos (semanas)': '', 'Alterações no mês': alteracoesTexto, 'Treinos Contratados': ''
-          });
+          rows.push({ codigo: c.id, nome: c.nome, inicio: '', termino: '', prolongamentos: '', alteracoes: alteracoesTexto, treinosContratados: '' });
         }
         return;
       }
@@ -1930,13 +2035,10 @@
         const diasTotais = daysBetween(inicio, termino);
         const semanasExtra = Math.max(0, Math.round((diasTotais - 28) / 7));
         rows.push({
-          'Código': c.id,
-          'Nome': c.nome,
-          'Início da Caderneta': fmtDateShort(inicio),
-          'Término': fmtDateShort(termino),
-          'Prolongamentos (semanas)': semanasExtra,
-          'Alterações no mês': alteracoesTexto,
-          'Treinos Contratados': c.sessoesEsperadas
+          codigo: c.id, nome: c.nome,
+          inicio: fmtDateShort(inicio), termino: fmtDateShort(termino),
+          prolongamentos: semanasExtra, alteracoes: alteracoesTexto,
+          treinosContratados: c.sessoesEsperadas,
         });
       });
     });
@@ -1959,14 +2061,14 @@
     return entradas.reverse().join('; ');
   }
 
-  function exportRelatorioExcel(){
-    if(typeof XLSX === 'undefined'){
+  async function exportRelatorioExcel(){
+    if(typeof ExcelJS === 'undefined'){
       showToast('Biblioteca Excel não carregou. Verifica a ligação à internet e tenta de novo.');
       return;
     }
     try{
       const wb = buildRelatorioWorkbook();
-      XLSX.writeFile(wb, `relatorio_pt_${todayISO()}.xlsx`);
+      await downloadWorkbook(wb, `relatorio_pt_${todayISO()}.xlsx`);
       showToast('Relatório exportado');
     }catch(e){
       console.error(e);
@@ -1974,14 +2076,14 @@
     }
   }
 
-  function exportHistoricoExcel(){
-    if(typeof XLSX === 'undefined'){
+  async function exportHistoricoExcel(){
+    if(typeof ExcelJS === 'undefined'){
       showToast('Biblioteca Excel não carregou. Verifica a ligação à internet e tenta de novo.');
       return;
     }
     try{
       const wb = buildHistoricoWorkbook();
-      XLSX.writeFile(wb, `historico_mensal_${todayISO()}.xlsx`);
+      await downloadWorkbook(wb, `historico_mensal_${todayISO()}.xlsx`);
       showToast('Relatório exportado');
     }catch(e){
       console.error(e);
@@ -1990,27 +2092,38 @@
   }
 
   function buildHistoricoWorkbook(){
-    const wb = XLSX.utils.book_new();
+    const wb = new ExcelJS.Workbook();
     const currentKey = monthKey(todayISO());
+    const cols = [
+      { header: 'Mês', key: 'mes', width: 14 },
+      { header: 'Treinos Interno', key: 'treinosInterno', width: 15 },
+      { header: 'Treinos Externo', key: 'treinosExterno', width: 15 },
+      { header: 'Treinos Total', key: 'treinosTotal', width: 13 },
+      { header: 'Patamar', key: 'patamar', width: 10 },
+      { header: 'Cadernetas Vendidas Interno', key: 'cadernetasInterno', width: 22 },
+      { header: 'Cadernetas Vendidas Externo', key: 'cadernetasExterno', width: 22 },
+      { header: 'Comissão Interno (€)', key: 'comissaoInterno', width: 18 },
+      { header: 'Comissão Externo (€)', key: 'comissaoExterno', width: 18 },
+      { header: 'Receita Prevista Total (€)', key: 'receitaPrevistaTotal', width: 20 },
+    ];
     const rows = [];
     for(let i = 0; i >= -11; i--){
       const m = computeHistoricoMes(addMonths(currentKey, i));
       rows.push({
-        'Mês': monthLabel(m.key),
-        'Treinos Interno': m.treinosInterno,
-        'Treinos Externo': m.treinosExterno,
-        'Treinos Total': m.treinosTotal,
-        'Patamar': m.patamar === 'alto' ? `>= ${PATAMAR_INTERNO}` : `< ${PATAMAR_INTERNO}`,
-        'Cadernetas Vendidas Interno': m.cadernetasInterno,
-        'Cadernetas Vendidas Externo': m.cadernetasExterno,
-        'Comissão Interno (€)': Number(m.comissaoInterno.toFixed(2)),
-        'Comissão Externo (€)': Number(m.comissaoExterno.toFixed(2)),
-        'Receita Prevista Total (€)': Number(m.receitaPrevista.toFixed(2)),
+        mes: monthLabel(m.key),
+        treinosInterno: m.treinosInterno, treinosExterno: m.treinosExterno, treinosTotal: m.treinosTotal,
+        patamar: m.patamar === 'alto' ? `>= ${PATAMAR_INTERNO}` : `< ${PATAMAR_INTERNO}`,
+        cadernetasInterno: m.cadernetasInterno, cadernetasExterno: m.cadernetasExterno,
+        comissaoInterno: Number(m.comissaoInterno.toFixed(2)),
+        comissaoExterno: Number(m.comissaoExterno.toFixed(2)),
+        receitaPrevistaTotal: Number(m.receitaPrevista.toFixed(2)),
       });
     }
-    const ws = XLSX.utils.json_to_sheet(rows);
-    ws['!cols'] = [{wch:14},{wch:15},{wch:15},{wch:13},{wch:10},{wch:22},{wch:22},{wch:18},{wch:18},{wch:20}];
-    XLSX.utils.book_append_sheet(wb, ws, 'Histórico Mensal');
+    addStyledSheet(wb, 'Histórico Mensal', cols, rows, {
+      comissaoInterno: 'pt',
+      comissaoExterno: 'deve',
+      receitaPrevistaTotal: 'ginasio',
+    });
     return wb;
   }
 
