@@ -2564,7 +2564,10 @@
             `<div style="margin-top:10px">` + pagamentosOrdenados.map(p => `
               <div class="list-item">
                 <span>${fmtDateShort(p.data)} — <strong>${Number(p.valor).toFixed(2)}€</strong>${p.cadernetaRef?` <span class="badge-inline bday">Caderneta(s) ${escapeHtml(p.cadernetaRef)} · ${pagamentoCoberturaLabel(p, c)}</span>`:''} ${p.nota?`(${escapeHtml(p.nota)})`:''}</span>
-                <button class="del" data-del-pag="${p.id}">×</button>
+                <span style="display:flex;gap:6px">
+                  <button class="backbtn" data-edit-pag="${p.id}" title="Editar pagamento" style="width:26px;height:26px;font-size:13px">✎</button>
+                  <button class="del" data-del-pag="${p.id}">×</button>
+                </span>
               </div>
             `).join('') + `</div>`
           }
@@ -2812,31 +2815,38 @@
           </div>
         </div>`;
     }
-    if(modal.type === 'pagamento'){
-      const valorSugerido = Number(c.valorCaderneta||0) > 0 ? Number(c.valorCaderneta).toFixed(2) : '';
+    if(modal.type === 'pagamento' || modal.type === 'editPagamento'){
+      const isEditPag = modal.type === 'editPagamento';
+      const pagamentoExistente = isEditPag ? (c.pagamentos||[]).find(p => p.id === modal.pagamentoId) : null;
+      const valorSugerido = pagamentoExistente ? Number(pagamentoExistente.valor).toFixed(2) : (Number(c.valorCaderneta||0) > 0 ? Number(c.valorCaderneta).toFixed(2) : '');
+      const dataSugerida = pagamentoExistente ? pagamentoExistente.data : todayISO();
+      const inicioSugerido = pagamentoExistente ? (pagamentoExistente.inicioCadernetaRef || pagamentoExistente.data) : (c.inicioCadernetaAtual || todayISO());
+      const cadernetasSugerido = pagamentoExistente ? (pagamentoExistente.cadernetas || 1) : 1;
+      const cadernetaRefSugerido = pagamentoExistente ? (pagamentoExistente.cadernetaRef || '') : '';
+      const notaSugerida = pagamentoExistente ? (pagamentoExistente.nota || '') : '';
       return `
         <div class="modal-sheet">
-          <h3>Registar pagamento</h3>
-          <p>Adicionar um pagamento para ${escapeHtml(c.nome)}.</p>
+          <h3>${isEditPag ? 'Editar pagamento' : 'Registar pagamento'}</h3>
+          <p>${isEditPag ? 'Ajustar' : 'Adicionar'} um pagamento para ${escapeHtml(c.nome)}.</p>
           <label>Valor (€)</label>
           <input type="number" id="m_pagValor" placeholder="0.00" step="0.01" value="${valorSugerido}">
           <label>Data do pagamento</label>
-          <input type="date" id="m_pagData" value="${todayISO()}">
+          <input type="date" id="m_pagData" value="${dataSugerida}">
           <p style="color:var(--text-muted);font-size:12px;margin:8px 0 0">Quando o dinheiro foi mesmo recebido — só para o teu registo, não decide o mês nos relatórios.</p>
           <label>Início da caderneta a que se refere</label>
-          <input type="date" id="m_pagInicioCaderneta" value="${c.inicioCadernetaAtual||todayISO()}">
+          <input type="date" id="m_pagInicioCaderneta" value="${inicioSugerido}">
           <p style="color:var(--text-muted);font-size:12px;margin:8px 0 0">Esta data decide o mês em que o pagamento entra nos relatórios (Nº Pagamentos, Cadernetas Pagas, Sessões Pagas) — mesmo que a data do pagamento seja diferente.</p>
           <label>Nº de cadernetas cobertas por este pagamento</label>
-          <input type="number" id="m_pagCadernetas" value="1" min="1" step="1">
+          <input type="number" id="m_pagCadernetas" value="${cadernetasSugerido}" min="1" step="1">
           <p style="color:var(--text-muted);font-size:12px;margin:8px 0 0">Se o pagamento cobrir várias cadernetas de uma vez (ex: 6 pagas adiantado), mete aqui esse número — cada uma conta no mês do seu próprio início, a partir da data acima.</p>
           <label>Nº da(s) caderneta(s) a que se refere (opcional)</label>
-          <input type="text" id="m_pagCadernetaRef" placeholder="Ex: 3 ou 4-6">
+          <input type="text" id="m_pagCadernetaRef" placeholder="Ex: 3 ou 4-6" value="${escapeAttr(cadernetaRefSugerido)}">
           <p style="color:var(--text-muted);font-size:12px;margin:8px 0 0">Referência livre, para saberes depois a que cadernetas específicas este pagamento corresponde (vês esta referência na lista de pagamentos).</p>
           <label>Nota (opcional)</label>
-          <input type="text" id="m_pagNota" placeholder="Ex: renovação caderneta">
+          <input type="text" id="m_pagNota" placeholder="Ex: renovação caderneta" value="${escapeAttr(notaSugerida)}">
           <div class="btn-row" style="margin-top:16px">
             <button class="btn btn-secondary" id="modalCancel">Cancelar</button>
-            <button class="btn btn-primary" id="modalConfirmPagamento">Registar</button>
+            <button class="btn btn-primary" id="modalConfirmPagamento">${isEditPag ? 'Guardar' : 'Registar'}</button>
           </div>
         </div>`;
     }
@@ -3111,6 +3121,12 @@
         render();
       };
     });
+    ov.querySelectorAll('[data-edit-pag]').forEach(b => {
+      b.onclick = () => {
+        state.modal = { type: 'editPagamento', id: state.activeId, pagamentoId: b.dataset.editPag };
+        showModal();
+      };
+    });
 
     const saveBtn = ov.querySelector('#btnSaveClient');
     if(saveBtn) saveBtn.onclick = async () => {
@@ -3340,11 +3356,23 @@
       const cadernetaRef = mb.querySelector('#m_pagCadernetaRef').value.trim();
       const nota = mb.querySelector('#m_pagNota').value.trim();
       c.pagamentos = c.pagamentos || [];
-      c.pagamentos.push({id: uid(), valor, data, inicioCadernetaRef, cadernetas, cadernetaRef, nota});
-      await saveData();
-      state.modal = null;
-      showToast('Pagamento registado');
-      render();
+      if(state.modal.type === 'editPagamento'){
+        const p = c.pagamentos.find(p => p.id === state.modal.pagamentoId);
+        if(p){
+          p.valor = valor; p.data = data; p.inicioCadernetaRef = inicioCadernetaRef;
+          p.cadernetas = cadernetas; p.cadernetaRef = cadernetaRef; p.nota = nota;
+        }
+        await saveData();
+        state.modal = null;
+        showToast('Pagamento atualizado');
+        render();
+      } else {
+        c.pagamentos.push({id: uid(), valor, data, inicioCadernetaRef, cadernetas, cadernetaRef, nota});
+        await saveData();
+        state.modal = null;
+        showToast('Pagamento registado');
+        render();
+      }
     };
 
     const confirmRenovar = mb.querySelector('#modalConfirmRenovar');
