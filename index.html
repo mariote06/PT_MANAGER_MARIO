@@ -1854,12 +1854,12 @@
     let treinosRows = [];
     state.clients.forEach(c => {
       (c.treinos||[]).forEach(t => {
-        treinosRows.push({ 'Cliente': c.nome, 'Tipo': c.tipo, 'Data': t.data, 'Nota': t.nota || '' });
+        treinosRows.push({ 'Cliente': c.nome, 'Tipo': c.tipo, 'Data': t.data, 'Hora': t.hora || '', 'Nota': t.nota || '' });
       });
     });
     treinosRows.sort((a,b) => a.Data.localeCompare(b.Data));
     const wsTreinos = XLSX.utils.json_to_sheet(treinosRows);
-    wsTreinos['!cols'] = [{wch:28},{wch:9},{wch:12},{wch:30}];
+    wsTreinos['!cols'] = [{wch:28},{wch:9},{wch:12},{wch:8},{wch:30}];
     XLSX.utils.book_append_sheet(wb, wsTreinos, 'Treinos Dados');
 
     let resumoRows = [];
@@ -1872,23 +1872,21 @@
         'Nº Pagamentos': pm.rows.length,
         'Cadernetas Pagas': pm.totalCadernetas,
         'Sessões Pagas': pm.totalSessoes,
-        'Valor Recebido Interno (€)': Number(pm.totalInterno.toFixed(2)),
-        'Valor Recebido Externo (€)': Number(pm.totalExterno.toFixed(2)),
-        'Valor Total Recebido (€)': Number(pm.totalValor.toFixed(2)),
-        'Treinos Interno': t.internoCount,
-        'Treinos Externo': t.externoCount,
-        'Treinos Total': t.total,
         'Patamar Comissão': t.patamar === 'alto' ? `>= ${PATAMAR_INTERNO}` : `< ${PATAMAR_INTERNO}`,
+        'Treinos Interno': t.internoCount,
         'Comissão Interno (€)': Number(t.comissaoInterno.toFixed(2)),
+        'Receita Ginásio (€)': Number(r.totalInterno.toFixed(2)),
+        'Treinos Externo': t.externoCount,
+        'Valor Recebido Externo (€)': Number(pm.totalExterno.toFixed(2)),
         'Comissão a Pagar Externo (€)': Number(t.comissaoExterno.toFixed(2)),
         'Valor Líquido Externo (€)': Number(t.valorLiquidoExterno.toFixed(2)),
-        'Receita Prevista Interno (€)': Number(r.totalInterno.toFixed(2)),
         'Receita Prevista Externo (€)': Number(r.totalExterno.toFixed(2)),
+        'Treinos Total': t.total,
         'Receita Prevista Total (€)': Number(r.total.toFixed(2)),
       });
     }
     const wsResumo = XLSX.utils.json_to_sheet(resumoRows);
-    wsResumo['!cols'] = [{wch:14},{wch:14},{wch:15},{wch:13},{wch:20},{wch:20},{wch:20},{wch:15},{wch:15},{wch:13},{wch:16},{wch:20},{wch:20},{wch:20},{wch:20},{wch:20},{wch:18}];
+    wsResumo['!cols'] = [{wch:14},{wch:14},{wch:15},{wch:13},{wch:16},{wch:15},{wch:20},{wch:18},{wch:15},{wch:20},{wch:20},{wch:20},{wch:20},{wch:13},{wch:20}];
     XLSX.utils.book_append_sheet(wb, wsResumo, 'Resumo Mensal');
 
     // Uma folha por mês, com o detalhe de cadernetas: início, término, prolongamentos,
