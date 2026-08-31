@@ -1802,10 +1802,23 @@
     let rows = [];
     state.clients.forEach(c => {
       (c.pagamentos||[]).forEach(p => {
-        if(p.data >= start && p.data <= end){
-          const cadernetas = p.cadernetas || 1;
-          const sessoes = (c.sessoesEsperadas||0) * cadernetas;
-          rows.push({ c, pagamento: p, cadernetas, sessoes, valor: Number(p.valor||0) });
+        const cadernetas = p.cadernetas || 1;
+        const inicioRef = p.inicioCadernetaRef || p.data;
+        // Cada caderneta coberta por este pagamento conta no mês em que ELA começa,
+        // não no mês da data do pagamento — um pagamento de 6 cadernetas de uma vez
+        // pode assim espalhar-se por vários meses, cada um com a sua parte proporcional.
+        let d = inicioRef;
+        for(let i = 0; i < cadernetas; i++){
+          if(d >= start && d <= end){
+            rows.push({
+              c, pagamento: p,
+              cadernetas: 1,
+              sessoes: c.sessoesEsperadas || 0,
+              valor: Number(p.valor||0) / cadernetas,
+              inicioCadernetaUnidade: d,
+            });
+          }
+          d = addDays(d, 28);
         }
       });
     });
@@ -1818,7 +1831,7 @@
     // Só os clientes Externos pagam diretamente ao PT — os Internos pagam ao ginásio,
     // por isso estes três nunca têm contribuição real de clientes Internos na prática.
     const rowsExterno = rows.filter(r => r.c.tipo === 'Externo');
-    const nPagamentosExterno = rowsExterno.length;
+    const nPagamentosExterno = new Set(rowsExterno.map(r => r.pagamento.id)).size;
     const totalCadernetasExterno = rowsExterno.reduce((s,r)=>s+r.cadernetas,0);
     const totalSessoesExterno = rowsExterno.reduce((s,r)=>s+r.sessoes,0);
     return { rows, totalValor, totalCadernetas, totalSessoes, totalInterno, totalExterno, nPagamentosExterno, totalCadernetasExterno, totalSessoesExterno };
@@ -2431,18 +2444,18 @@
 
   function renderPagamentosMesBody(key){
     const d = computePagamentosMes(key);
-    const rowsHtml = d.rows.length === 0 ? `<div class="empty-state">Sem pagamentos registados neste mês.</div>` :
+    const rowsHtml = d.rows.length === 0 ? `<div class="empty-state">Sem cadernetas pagas com início neste mês.</div>` :
       d.rows.map(r => `
         <div class="list-item">
-          <span>${escapeHtml(r.c.nome)}${r.cadernetas>1?` <span class="badge-inline bday">${r.cadernetas} cadernetas</span>`:''}
-            <br><span style="color:var(--text-dim);font-size:11.5px">${fmtDateShort(r.pagamento.data)} · ${r.sessoes} sessões${r.pagamento.cadernetaRef?` · Caderneta(s) ${escapeHtml(r.pagamento.cadernetaRef)} (${pagamentoCoberturaLabel(r.pagamento, r.c)})`:''}${r.pagamento.nota?` · ${escapeHtml(r.pagamento.nota)}`:''}</span>
+          <span>${escapeHtml(r.c.nome)}
+            <br><span style="color:var(--text-dim);font-size:11.5px">Caderneta com início ${fmtDateShort(r.inicioCadernetaUnidade)} · pago em ${fmtDateShort(r.pagamento.data)} · ${r.sessoes} sessões${r.pagamento.cadernetaRef?` · Ref. ${escapeHtml(r.pagamento.cadernetaRef)}`:''}${r.pagamento.nota?` · ${escapeHtml(r.pagamento.nota)}`:''}</span>
           </span>
           <span class="mono">${r.valor.toFixed(2)}€</span>
         </div>
       `).join('');
     return `
       <div class="card">
-        <h3>Pagamentos registados</h3>
+        <h3>Cadernetas pagas com início neste mês</h3>
         ${rowsHtml}
       </div>
       <div class="card">
@@ -2807,11 +2820,15 @@
           <p>Adicionar um pagamento para ${escapeHtml(c.nome)}.</p>
           <label>Valor (€)</label>
           <input type="number" id="m_pagValor" placeholder="0.00" step="0.01" value="${valorSugerido}">
-          <label>Data</label>
+          <label>Data do pagamento</label>
           <input type="date" id="m_pagData" value="${todayISO()}">
+          <p style="color:var(--text-muted);font-size:12px;margin:8px 0 0">Quando o dinheiro foi mesmo recebido — só para o teu registo, não decide o mês nos relatórios.</p>
+          <label>Início da caderneta a que se refere</label>
+          <input type="date" id="m_pagInicioCaderneta" value="${c.inicioCadernetaAtual||todayISO()}">
+          <p style="color:var(--text-muted);font-size:12px;margin:8px 0 0">Esta data decide o mês em que o pagamento entra nos relatórios (Nº Pagamentos, Cadernetas Pagas, Sessões Pagas) — mesmo que a data do pagamento seja diferente.</p>
           <label>Nº de cadernetas cobertas por este pagamento</label>
           <input type="number" id="m_pagCadernetas" value="1" min="1" step="1">
-          <p style="color:var(--text-muted);font-size:12px;margin:8px 0 0">Se o pagamento cobrir várias cadernetas de uma vez (ex: 6 pagas adiantado), mete aqui esse número — entra todo no relatório mensal de pagamentos, no mês deste pagamento.</p>
+          <p style="color:var(--text-muted);font-size:12px;margin:8px 0 0">Se o pagamento cobrir várias cadernetas de uma vez (ex: 6 pagas adiantado), mete aqui esse número — cada uma conta no mês do seu próprio início, a partir da data acima.</p>
           <label>Nº da(s) caderneta(s) a que se refere (opcional)</label>
           <input type="text" id="m_pagCadernetaRef" placeholder="Ex: 3 ou 4-6">
           <p style="color:var(--text-muted);font-size:12px;margin:8px 0 0">Referência livre, para saberes depois a que cadernetas específicas este pagamento corresponde (vês esta referência na lista de pagamentos).</p>
@@ -3318,11 +3335,12 @@
       const c = getClient(state.modal.id);
       const valor = parseFloat(mb.querySelector('#m_pagValor').value) || 0;
       const data = mb.querySelector('#m_pagData').value || todayISO();
+      const inicioCadernetaRef = mb.querySelector('#m_pagInicioCaderneta').value || data;
       const cadernetas = parseInt(mb.querySelector('#m_pagCadernetas').value) || 1;
       const cadernetaRef = mb.querySelector('#m_pagCadernetaRef').value.trim();
       const nota = mb.querySelector('#m_pagNota').value.trim();
       c.pagamentos = c.pagamentos || [];
-      c.pagamentos.push({id: uid(), valor, data, cadernetas, cadernetaRef, nota});
+      c.pagamentos.push({id: uid(), valor, data, inicioCadernetaRef, cadernetas, cadernetaRef, nota});
       await saveData();
       state.modal = null;
       showToast('Pagamento registado');
