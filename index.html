@@ -515,24 +515,20 @@
     return dates;
   }
 
-  // Datas de validade realmente conhecidas no passado (a partir do histórico de alterações),
-  // evitando "inventar" renovações fantasma quando já houve prolongamentos irregulares.
+  // Datas de validade realmente conhecidas no passado (a partir do histórico de alterações).
+  // Já não filtra por "múltiplo de 7 dias" — isso bloqueava edições manuais legítimas feitas
+  // através do botão de editar caderneta. Agora que há edição/eliminação manual disponível,
+  // confia-se em qualquer valor "depois" registado (é sempre o que ficou mesmo a valer),
+  // e só se aceita "antes" até à validade atual, para nunca mostrar datas ainda por acontecer.
   function getKnownValidadeHistory(client){
     const set = new Set();
     const anchor = client.cicloValidade;
     if(anchor) set.add(anchor);
     (client.historico||[]).forEach(h => {
       (h.changes||[]).forEach(ch => {
-        // Só entra se estiver a um múltiplo exato de 7 dias (semanas inteiras) da validade
-        // atual — os prolongamentos são sempre em semanas completas (podem não ser
-        // múltiplos de 4 semanas), por isso a grelha certa é de 7 em 7 dias, não 28 em 28.
-        // Isto continua a filtrar ruído de testes/edições que caiam fora de qualquer semana
-        // inteira, sem esconder cadernetas antigas cujo prolongamento quebrou o ciclo de 28.
-        // Nunca aceita datas DEPOIS da validade atual: essas ainda não aconteceram (podem
-        // ser resíduo de testes/edições antigas) e são sempre calculadas por projeção.
-        if(ch.campo !== 'cicloValidade' || !anchor) return;
-        if(ch.depois && ch.depois <= anchor && daysBetween(ch.depois, anchor) % 7 === 0) set.add(ch.depois);
-        if(ch.antes && ch.antes <= anchor && daysBetween(ch.antes, anchor) % 7 === 0) set.add(ch.antes);
+        if(ch.campo !== 'cicloValidade') return;
+        if(ch.depois && (!anchor || ch.depois <= anchor)) set.add(ch.depois);
+        if(ch.antes && (!anchor || ch.antes <= anchor)) set.add(ch.antes);
       });
     });
     return Array.from(set).sort();
@@ -564,9 +560,9 @@
     if(anchor) set.add(anchor);
     (client.historico||[]).forEach(h => {
       (h.changes||[]).forEach(ch => {
-        if(ch.campo !== 'inicioCadernetaAtual' || !anchor) return;
-        if(ch.depois && ch.depois <= anchor && daysBetween(ch.depois, anchor) % 7 === 0) set.add(ch.depois);
-        if(ch.antes && ch.antes <= anchor && daysBetween(ch.antes, anchor) % 7 === 0) set.add(ch.antes);
+        if(ch.campo !== 'inicioCadernetaAtual') return;
+        if(ch.depois && (!anchor || ch.depois <= anchor)) set.add(ch.depois);
+        if(ch.antes && (!anchor || ch.antes <= anchor)) set.add(ch.antes);
       });
     });
     return Array.from(set).sort();
