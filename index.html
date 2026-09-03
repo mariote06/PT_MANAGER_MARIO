@@ -38,6 +38,7 @@
     --amber: #ffb84a;
     --amber-dim: #4a3a20;
     --ok: #4ade80;
+    --app-max-width: 480px;
 
     background: var(--bg);
     color: var(--text);
@@ -45,10 +46,17 @@
     min-height: 100vh;
     position: relative;
     padding-bottom: 88px;
-    max-width: 480px;
+    max-width: var(--app-max-width);
     margin: 0 auto;
     border-left: 1px solid var(--line);
     border-right: 1px solid var(--line);
+  }
+  /* Em ecrãs largos (PC), a app deixa de ficar espremida numa coluna estreita */
+  @media (min-width: 860px) {
+    #pt-app-root { --app-max-width: 760px; }
+  }
+  @media (min-width: 1200px) {
+    #pt-app-root { --app-max-width: 920px; }
   }
   #pt-app-root .mono {
     font-family: ui-monospace, "SF Mono", "Menlo", "Consolas", monospace;
@@ -144,7 +152,7 @@
   /* Bottom nav */
   #pt-app-root .bottomnav {
     position: fixed; bottom: 0; left: 50%; transform: translateX(-50%);
-    width: 100%; max-width: 480px; background: var(--surface);
+    width: 100%; max-width: var(--app-max-width); background: var(--surface);
     border-top: 1px solid var(--line); display: flex; z-index: 30;
     padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px));
   }
@@ -158,17 +166,26 @@
 
   #pt-app-root .fab {
     position: fixed; bottom: 78px; left: 50%;
-    transform: translateX(calc(-50% + 190px));
+    --fab-offset: 190px;
+    transform: translateX(calc(-50% + var(--fab-offset)));
     width: 52px; height: 52px; border-radius: 50%; background: var(--lime);
     color: #12140c; border: none; font-size: 26px; font-weight: 700; z-index: 30;
     box-shadow: 0 6px 18px rgba(212,255,63,0.3); cursor: pointer;
     display: flex; align-items: center; justify-content: center;
   }
+  /* mantém o botão "+" alinhado com a mesma posição relativa da barra inferior,
+     que também alarga nestes pontos de quebra */
+  @media (min-width: 860px) {
+    #pt-app-root .fab { --fab-offset: 301px; }
+  }
+  @media (min-width: 1200px) {
+    #pt-app-root .fab { --fab-offset: 365px; }
+  }
 
   /* Detail / form overlay */
   #pt-app-root .overlay {
     position: fixed; top: 0; bottom: 0; background: var(--bg); z-index: 50;
-    width: 100%; max-width: 480px; overflow-y: auto; padding-bottom: 40px;
+    width: 100%; max-width: var(--app-max-width); overflow-y: auto; padding-bottom: 40px;
     left: 50%; transform: translateX(-50%);
   }
   #pt-app-root .overlay-header {
@@ -321,7 +338,7 @@
     display: flex; align-items: flex-end; justify-content: center;
   }
   #pt-app-root .modal-sheet {
-    background: var(--surface); width: 100%; max-width: 480px; border-radius: 18px 18px 0 0;
+    background: var(--surface); width: 100%; max-width: var(--app-max-width); border-radius: 18px 18px 0 0;
     padding: 20px 18px calc(20px + env(safe-area-inset-bottom, 0px)); border: 1px solid var(--line); border-bottom: none;
   }
   #pt-app-root .modal-sheet h3 { margin: 0 0 6px; font-size: 16px; }
