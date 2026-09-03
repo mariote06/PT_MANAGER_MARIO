@@ -811,7 +811,29 @@
     // renumera de forma simples e sequencial para exibição
     let n = 1;
     blocos.forEach(b => { if(b.numero !== 0) b.numero = n++; });
+
+    // Sessões em atraso de uma caderneta passam automaticamente para a seguinte (só visual —
+    // não afeta comissões/receita, só quantos quadradinhos/expectativa aparecem na ficha).
+    let atraso = 0;
+    blocos.forEach(b => {
+      if(b.numero === 0){
+        b.esperadasComAtraso = client.sessoesEsperadas || 0;
+        return;
+      }
+      b.esperadasComAtraso = (client.sessoesEsperadas || 0) + atraso;
+      atraso = Math.max(0, b.esperadasComAtraso - b.treinos.length);
+    });
+
     return blocos;
+  }
+
+  // Sessões esperadas da caderneta ATUAL, já incluindo qualquer atraso transportado da
+  // caderneta anterior (só visual — não afeta comissões/receita). Usa-se em qualquer sítio
+  // que mostre "X/Y treinos" da caderneta em curso (Dashboard, Lista, Ficha do Cliente).
+  function sessoesEsperadasAtuaisComAtraso(client){
+    const blocos = computeCadernetasHistorico(client);
+    const atual = blocos.find(b => b.emCurso);
+    return atual ? atual.esperadasComAtraso : (client.sessoesEsperadas || 0);
   }
 
   // Dado um número de caderneta (1, 2, 3...), procura a data real de início — nas já
@@ -1662,7 +1684,7 @@
           <div class="alert-card ${cls==='urgent'?'urgent':'soon'}" data-open="${c.id}">
             <div>
               <div class="name">${escapeHtml(c.nome)}</div>
-              <div class="meta">${done}/${c.sessoesEsperadas} treinos · válida até ${fmtDateShort(c.cicloValidade)}</div>
+              <div class="meta">${done}/${sessoesEsperadasAtuaisComAtraso(c)} treinos · válida até ${fmtDateShort(c.cicloValidade)}</div>
             </div>
             <div class="tag ${cls==='urgent'?'urgent':'soon'}">${label}</div>
           </div>`;
@@ -1692,7 +1714,7 @@
     return list.map(c => {
       const st = statusClass(c);
       const done = cycleTrainedCount(c);
-      const total = c.sessoesEsperadas;
+      const total = sessoesEsperadasAtuaisComAtraso(c);
       let stamps = '';
       for(let i=0; i<Math.max(total,done); i++){
         const cls = i<total ? (i<done?'filled':'') : 'extra';
@@ -2537,7 +2559,7 @@
 
   function renderDetail(c){
     const done = cycleTrainedCount(c);
-    const total = c.sessoesEsperadas;
+    const total = sessoesEsperadasAtuaisComAtraso(c);
     let stampsLg = '';
     for(let i=0; i<Math.max(total,done); i++){
       if(i < total){
@@ -2604,7 +2626,7 @@
                 <div class="caderneta-block-head">
                   <span>${bloco.numero===0?'Antes do histórico rastreado':`Caderneta ${bloco.numero}`}${bloco.emCurso?' (em curso)':''}${bloco.prolongada?' <span class="badge-tipo externo">Prolongada</span>':''}</span>
                   <span style="display:flex;align-items:center;gap:8px">
-                    <span class="mono">${bloco.treinos.length}/${c.sessoesEsperadas}</span>
+                    <span class="mono">${bloco.treinos.length}/${bloco.esperadasComAtraso}</span>
                     ${bloco.editavel ? `<button class="backbtn" data-edit-caderneta="${bloco.inicio}|${bloco.fim}|${bloco.emCurso?'1':'0'}" title="Editar esta caderneta" style="width:26px;height:26px;font-size:13px">✎</button>` : ''}
                     ${bloco.editavel ? `<button class="backbtn" data-del-caderneta="${bloco.inicio}|${bloco.emCurso?'1':'0'}" title="Eliminar esta caderneta (funde com a anterior)" style="width:26px;height:26px;font-size:13px">🗑</button>` : ''}
                   </span>
