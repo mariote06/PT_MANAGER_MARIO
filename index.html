@@ -565,6 +565,10 @@
         if(ch.antes && (!anchor || ch.antes <= anchor)) set.add(ch.antes);
       });
     });
+    // Remove fronteiras eliminadas manualmente (botão de eliminar caderneta) —
+    // funciona mesmo quando a fronteira nunca teve uma ação registada no histórico
+    // (ex: veio da importação inicial), já que aqui não depende de encontrar uma entrada.
+    (client.cadernetaBoundariesRemovidas || []).forEach(d => set.delete(d));
     return Array.from(set).sort();
   }
 
@@ -847,6 +851,7 @@
     if(c.pagoAte === undefined) c.pagoAte = '';
     if(c.inicioCadernetaAtual === undefined) c.inicioCadernetaAtual = addDays(c.cicloValidade, -28);
     if(c.autoRenovar === undefined) c.autoRenovar = false;
+    if(c.cadernetaBoundariesRemovidas === undefined) c.cadernetaBoundariesRemovidas = [];
     if(c.proximoTreino === undefined) c.proximoTreino = null;
     if(c.concentrarComprasNoMes === undefined) c.concentrarComprasNoMes = false;
     return c;
@@ -872,6 +877,9 @@
     }
     if(campo === 'corGoogle'){
       return googleColorName(val);
+    }
+    if(campo === 'cadernetaBoundariesRemovidas'){
+      return Array.isArray(val) && val.length > 0 ? val.map(d => fmtDateShort(d)).join(', ') : '—';
     }
     if(val === '' || val === null || val === undefined) return '—';
     return String(val);
@@ -3354,18 +3362,16 @@
       const c = getClient(state.modal.id);
       const inicio = state.modal.inicio;
       const emCurso = state.modal.emCurso;
-      let sucesso = false;
       if(emCurso){
         // a caderneta em curso corresponde sempre à alteração mais recente do histórico;
         // desfazê-la reverte os campos ao vivo para o estado anterior (correto neste caso).
         if(c.historico && c.historico.length > 0){
-          sucesso = undoSpecificChange(c, c.historico[0].id);
+          undoSpecificChange(c, c.historico[0].id);
         }
       } else {
-        // Uma fronteira é normalmente referenciada duas vezes no histórico: como "depois"
-        // na entrada que a criou, e como "antes" na entrada seguinte que a substituiu.
-        // Para a eliminar de vez (fundindo com a caderneta anterior), removemos a entrada
-        // que a criou e "reconectamos" a entrada seguinte ao valor anterior a essa fronteira.
+        // Se existir uma entrada no histórico que criou esta fronteira, reconecta-a (para
+        // não deixar referências soltas), mas a exclusão funciona sempre — mesmo quando a
+        // fronteira nunca teve uma ação registada (ex: veio da importação inicial).
         const idx = (c.historico||[]).findIndex(h => (h.changes||[]).some(ch => ch.campo === 'inicioCadernetaAtual' && ch.depois === inicio));
         if(idx !== -1){
           const change = c.historico[idx].changes.find(ch => ch.campo === 'inicioCadernetaAtual' && ch.depois === inicio);
@@ -3374,15 +3380,16 @@
           (c.historico||[]).forEach(h => (h.changes||[]).forEach(ch => {
             if(ch.campo === 'inicioCadernetaAtual' && ch.antes === inicio) ch.antes = valorAnterior;
           }));
-          sucesso = true;
         }
+        c.cadernetaBoundariesRemovidas = c.cadernetaBoundariesRemovidas || [];
+        const antesArray = c.cadernetaBoundariesRemovidas.slice();
+        if(!c.cadernetaBoundariesRemovidas.includes(inicio)) c.cadernetaBoundariesRemovidas.push(inicio);
+        logChange(c, `Eliminação de caderneta (início ${fmtDateShort(inicio)}, fundida com a anterior)`, [
+          { campo: 'cadernetaBoundariesRemovidas', rotulo: 'Cadernetas eliminadas', antes: antesArray, depois: c.cadernetaBoundariesRemovidas.slice() }
+        ]);
       }
-      if(sucesso){
-        await saveData();
-        showToast('Caderneta eliminada — fundida com a anterior');
-      } else {
-        showToast('Não foi possível encontrar a alteração correspondente a esta caderneta');
-      }
+      await saveData();
+      showToast('Caderneta eliminada — fundida com a anterior');
       state.modal = null;
       render();
     };
