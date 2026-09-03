@@ -2553,7 +2553,7 @@
 
         <div class="card">
           <h3>Histórico de treinos por caderneta (${(c.treinos||[]).length} no total)</h3>
-          <p style="color:var(--text-muted);font-size:12px;margin:0 0 12px">Cadernetas reais, delimitadas pelo Início/Válida até de cada ciclo (incluindo prolongamentos). Toca no lápis para editar as datas de uma caderneta anterior, ou num treino para o editar/reatribuir.</p>
+          <p style="color:var(--text-muted);font-size:12px;margin:0 0 12px">Cadernetas reais, delimitadas pelo Início/Válida até de cada ciclo (incluindo prolongamentos). Toca no lápis para editar as datas de uma caderneta anterior, na lixeira para a eliminar (funde-a com a anterior), ou num treino para o editar/reatribuir.</p>
           ${cadernetasHistorico.length===0 ? '<div class="empty-state">Ainda sem treinos registados.</div>' :
             cadernetasHistorico.slice().reverse().map(bloco => `
               <div class="caderneta-block">
@@ -2562,6 +2562,7 @@
                   <span style="display:flex;align-items:center;gap:8px">
                     <span class="mono">${bloco.treinos.length}/${c.sessoesEsperadas}</span>
                     ${bloco.editavel ? `<button class="backbtn" data-edit-caderneta="${bloco.inicio}|${bloco.fim}|${bloco.emCurso?'1':'0'}" title="Editar esta caderneta" style="width:26px;height:26px;font-size:13px">✎</button>` : ''}
+                    ${bloco.editavel ? `<button class="backbtn" data-del-caderneta="${bloco.inicio}|${bloco.emCurso?'1':'0'}" title="Eliminar esta caderneta (funde com a anterior)" style="width:26px;height:26px;font-size:13px">🗑</button>` : ''}
                   </span>
                 </div>
                 <div class="caderneta-block-range">${bloco.inicio?`${fmtDateShort(bloco.inicio)} – `:'até '}${fmtDateShort(bloco.fim)}${bloco.prolongada?` · ${bloco.dias} dias`:''}</div>
@@ -2739,6 +2740,17 @@
           <div class="btn-row" style="margin-top:16px">
             <button class="btn btn-secondary" id="modalCancel">Cancelar</button>
             <button class="btn btn-primary" id="modalConfirmEditCaderneta">Guardar</button>
+          </div>
+        </div>`;
+    }
+    if(modal.type === 'deleteCaderneta'){
+      return `
+        <div class="modal-sheet">
+          <h3>Eliminar caderneta</h3>
+          <p>Isto funde esta caderneta de ${escapeHtml(c.nome)} com a caderneta anterior (reverte a renovação/prolongamento que a criou). Os treinos que estavam lá dentro passam a contar na caderneta fundida. Esta ação não pode ser desfeita automaticamente depois de saíres desta ficha.</p>
+          <div class="btn-row" style="margin-top:16px">
+            <button class="btn btn-secondary" id="modalCancel">Cancelar</button>
+            <button class="btn btn-primary" id="modalConfirmDeleteCaderneta" style="background:var(--coral)">Eliminar</button>
           </div>
         </div>`;
     }
@@ -3124,6 +3136,14 @@
       };
     });
 
+    ov.querySelectorAll('[data-del-caderneta]').forEach(el => {
+      el.onclick = () => {
+        const [inicio, emCurso] = el.dataset.delCaderneta.split('|');
+        state.modal = { type: 'deleteCaderneta', id: state.activeId, inicio: inicio || '', emCurso: emCurso === '1' };
+        showModal();
+      };
+    });
+
     ov.querySelectorAll('[data-del-treino]').forEach(b => {
       b.onclick = async () => {
         const c = getClient(state.activeId);
@@ -3316,6 +3336,44 @@
         logChange(c, 'Edição de caderneta anterior', changes);
         await saveData();
         showToast('Caderneta atualizada');
+      }
+      state.modal = null;
+      render();
+    };
+
+    const confirmDeleteCaderneta = mb.querySelector('#modalConfirmDeleteCaderneta');
+    if(confirmDeleteCaderneta) confirmDeleteCaderneta.onclick = async () => {
+      const c = getClient(state.modal.id);
+      const inicio = state.modal.inicio;
+      const emCurso = state.modal.emCurso;
+      let sucesso = false;
+      if(emCurso){
+        // a caderneta em curso corresponde sempre à alteração mais recente do histórico;
+        // desfazê-la reverte os campos ao vivo para o estado anterior (correto neste caso).
+        if(c.historico && c.historico.length > 0){
+          sucesso = undoSpecificChange(c, c.historico[0].id);
+        }
+      } else {
+        // Uma fronteira é normalmente referenciada duas vezes no histórico: como "depois"
+        // na entrada que a criou, e como "antes" na entrada seguinte que a substituiu.
+        // Para a eliminar de vez (fundindo com a caderneta anterior), removemos a entrada
+        // que a criou e "reconectamos" a entrada seguinte ao valor anterior a essa fronteira.
+        const idx = (c.historico||[]).findIndex(h => (h.changes||[]).some(ch => ch.campo === 'inicioCadernetaAtual' && ch.depois === inicio));
+        if(idx !== -1){
+          const change = c.historico[idx].changes.find(ch => ch.campo === 'inicioCadernetaAtual' && ch.depois === inicio);
+          const valorAnterior = change.antes;
+          c.historico.splice(idx, 1);
+          (c.historico||[]).forEach(h => (h.changes||[]).forEach(ch => {
+            if(ch.campo === 'inicioCadernetaAtual' && ch.antes === inicio) ch.antes = valorAnterior;
+          }));
+          sucesso = true;
+        }
+      }
+      if(sucesso){
+        await saveData();
+        showToast('Caderneta eliminada — fundida com a anterior');
+      } else {
+        showToast('Não foi possível encontrar a alteração correspondente a esta caderneta');
       }
       state.modal = null;
       render();
