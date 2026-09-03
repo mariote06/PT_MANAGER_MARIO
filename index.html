@@ -1889,6 +1889,21 @@
       (c.pagamentos||[]).forEach(p => {
         const cadernetas = p.cadernetas || 1;
         const inicioRef = p.inicioCadernetaRef || p.data;
+        if(c.concentrarComprasNoMes){
+          // Fica tudo concentrado no mês de início do período pago — a totalidade das
+          // sessões e do valor conta de uma vez só, no mês da 1ª caderneta, tal como já
+          // acontece no Treinos/Mês para estes clientes (nunca se espalha por vários meses).
+          if(inicioRef >= start && inicioRef <= end){
+            rows.push({
+              c, pagamento: p,
+              cadernetas,
+              sessoes: (c.sessoesEsperadas || 0) * cadernetas,
+              valor: Number(p.valor||0),
+              inicioCadernetaUnidade: inicioRef,
+            });
+          }
+          return;
+        }
         // Cada caderneta coberta por este pagamento conta no mês em que ELA começa,
         // não no mês da data do pagamento — um pagamento de 6 cadernetas de uma vez
         // pode assim espalhar-se por vários meses, cada um com a sua parte proporcional.
