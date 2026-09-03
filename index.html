@@ -3300,8 +3300,6 @@
     const cancel = mb.querySelector('#modalCancel');
     if(cancel) cancel.onclick = () => { state.modal = null; showModal(); };
 
-    mb.onclick = (e) => { if(e.target === mb){ state.modal = null; showModal(); } };
-
     const confirmRenovarTodas = mb.querySelector('#modalConfirmRenovarTodas');
     if(confirmRenovarTodas) confirmRenovarTodas.onclick = async () => {
       const ids = state.modal.expiradasIds || [];
