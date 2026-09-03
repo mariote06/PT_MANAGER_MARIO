@@ -51,12 +51,10 @@
     border-left: 1px solid var(--line);
     border-right: 1px solid var(--line);
   }
-  /* Em ecrãs largos (PC), a app deixa de ficar espremida numa coluna estreita */
+  /* Em ecrãs largos (PC), a app deixa de ficar espremida numa coluna estreita —
+     acompanha a largura real da janela (fluido), com um limite máximo generoso. */
   @media (min-width: 860px) {
-    #pt-app-root { --app-max-width: 760px; }
-  }
-  @media (min-width: 1200px) {
-    #pt-app-root { --app-max-width: 920px; }
+    #pt-app-root { --app-max-width: min(94vw, 1400px); }
   }
   #pt-app-root .mono {
     font-family: ui-monospace, "SF Mono", "Menlo", "Consolas", monospace;
@@ -174,12 +172,9 @@
     display: flex; align-items: center; justify-content: center;
   }
   /* mantém o botão "+" alinhado com a mesma posição relativa da barra inferior,
-     que também alarga nestes pontos de quebra */
+     agora que a largura é fluida (proporção igual à original: 190/480) */
   @media (min-width: 860px) {
-    #pt-app-root .fab { --fab-offset: 301px; }
-  }
-  @media (min-width: 1200px) {
-    #pt-app-root .fab { --fab-offset: 365px; }
+    #pt-app-root .fab { --fab-offset: calc(var(--app-max-width) * 0.3958); }
   }
 
   /* Detail / form overlay */
