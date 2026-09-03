@@ -526,10 +526,18 @@
     if(anchor) set.add(anchor);
     (client.historico||[]).forEach(h => {
       (h.changes||[]).forEach(ch => {
-        if(ch.campo !== 'cicloValidade') return;
-        if(ch.depois && (!anchor || ch.depois <= anchor)) set.add(ch.depois);
-        if(ch.antes && (!anchor || ch.antes <= anchor)) set.add(ch.antes);
+        // Só entra se estiver a um múltiplo exato de 7 dias (semanas inteiras) da validade
+        // atual — filtra ruído de testes/edições antigas acumuladas no histórico, sem
+        // esconder cadernetas cujo prolongamento (sempre em semanas) quebrou o ciclo de 28.
+        if(ch.campo !== 'cicloValidade' || !anchor) return;
+        if(ch.depois && ch.depois <= anchor && daysBetween(ch.depois, anchor) % 7 === 0) set.add(ch.depois);
+        if(ch.antes && ch.antes <= anchor && daysBetween(ch.antes, anchor) % 7 === 0) set.add(ch.antes);
       });
+    });
+    // Datas confirmadas manualmente (via o botão de editar caderneta) entram sempre,
+    // mesmo que não caiam numa semana certa — foi o próprio utilizador que as escolheu.
+    (client.cadernetaBoundariesConfirmadas || []).forEach(d => {
+      if(!anchor || d <= anchor) set.add(d);
     });
     return Array.from(set).sort();
   }
@@ -560,10 +568,14 @@
     if(anchor) set.add(anchor);
     (client.historico||[]).forEach(h => {
       (h.changes||[]).forEach(ch => {
-        if(ch.campo !== 'inicioCadernetaAtual') return;
-        if(ch.depois && (!anchor || ch.depois <= anchor)) set.add(ch.depois);
-        if(ch.antes && (!anchor || ch.antes <= anchor)) set.add(ch.antes);
+        if(ch.campo !== 'inicioCadernetaAtual' || !anchor) return;
+        if(ch.depois && ch.depois <= anchor && daysBetween(ch.depois, anchor) % 7 === 0) set.add(ch.depois);
+        if(ch.antes && ch.antes <= anchor && daysBetween(ch.antes, anchor) % 7 === 0) set.add(ch.antes);
       });
+    });
+    // Datas confirmadas manualmente (editar caderneta) entram sempre, mesmo fora da grelha.
+    (client.cadernetaBoundariesConfirmadas || []).forEach(d => {
+      if(!anchor || d <= anchor) set.add(d);
     });
     // Remove fronteiras eliminadas manualmente (botão de eliminar caderneta) —
     // funciona mesmo quando a fronteira nunca teve uma ação registada no histórico
@@ -741,6 +753,10 @@
         if(ch.depois === oldValue) ch.depois = newValue;
       }
     }));
+    if(client.cadernetaBoundariesConfirmadas){
+      const idx = client.cadernetaBoundariesConfirmadas.indexOf(oldValue);
+      if(idx !== -1) client.cadernetaBoundariesConfirmadas[idx] = newValue;
+    }
   }
   function updateCicloValidadeBoundary(client, oldValue, newValue){
     if(client.cicloValidade === oldValue) client.cicloValidade = newValue;
@@ -750,6 +766,10 @@
         if(ch.depois === oldValue) ch.depois = newValue;
       }
     }));
+    if(client.cadernetaBoundariesConfirmadas){
+      const idx = client.cadernetaBoundariesConfirmadas.indexOf(oldValue);
+      if(idx !== -1) client.cadernetaBoundariesConfirmadas[idx] = newValue;
+    }
   }
 
   function computeCadernetasHistorico(client){
@@ -852,6 +872,7 @@
     if(c.inicioCadernetaAtual === undefined) c.inicioCadernetaAtual = addDays(c.cicloValidade, -28);
     if(c.autoRenovar === undefined) c.autoRenovar = false;
     if(c.cadernetaBoundariesRemovidas === undefined) c.cadernetaBoundariesRemovidas = [];
+    if(c.cadernetaBoundariesConfirmadas === undefined) c.cadernetaBoundariesConfirmadas = [];
     if(c.proximoTreino === undefined) c.proximoTreino = null;
     if(c.concentrarComprasNoMes === undefined) c.concentrarComprasNoMes = false;
     return c;
@@ -3333,9 +3354,11 @@
         return;
       }
       const changes = [];
+      c.cadernetaBoundariesConfirmadas = c.cadernetaBoundariesConfirmadas || [];
       if(inicioAntigo && novoInicio !== inicioAntigo){
         updateInicioCadernetaBoundary(c, inicioAntigo, novoInicio);
         changes.push({ campo: 'inicioCadernetaAtual', rotulo: 'Início da Caderneta (editada)', antes: inicioAntigo, depois: novoInicio });
+        if(!c.cadernetaBoundariesConfirmadas.includes(novoInicio)) c.cadernetaBoundariesConfirmadas.push(novoInicio);
       }
       if(fimAntigo && novoFim !== fimAntigo){
         // O término da caderneta ATUAL vive em cicloValidade; o das anteriores vive em
@@ -3347,6 +3370,7 @@
           updateInicioCadernetaBoundary(c, fimAntigo, novoFim);
           changes.push({ campo: 'inicioCadernetaAtual', rotulo: 'Término da Caderneta (editado)', antes: fimAntigo, depois: novoFim });
         }
+        if(!c.cadernetaBoundariesConfirmadas.includes(novoFim)) c.cadernetaBoundariesConfirmadas.push(novoFim);
       }
       if(changes.length > 0){
         logChange(c, 'Edição de caderneta anterior', changes);
