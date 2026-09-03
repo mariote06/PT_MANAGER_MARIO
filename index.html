@@ -1236,9 +1236,11 @@
       const events = data.items || [];
       const eventsById = new Map(events.map(ev => [ev.id, ev]));
 
-      let added = 0, jaExistia = 0, semCorrespondencia = 0, ambiguo = 0, corDiferente = 0, atualizados = 0, removidos = 0;
+      let added = 0, jaExistia = 0, semCorrespondencia = 0, ambiguo = 0, corDiferente = 0, atualizados = 0, removidos = 0, removidosPorCor = 0;
 
-      // Reconciliação: treinos já importados cujo evento, dentro desta janela, foi apagado ou reagendado no Calendar
+      // Reconciliação: treinos já importados cujo evento, dentro desta janela, foi apagado,
+      // reagendado, ou deixou de ter a cor de "treino dado" (ex: mudado para vermelho porque
+      // o cliente não veio) no Calendar.
       state.clients.forEach(c => {
         c.treinos = (c.treinos || []).filter(t => {
           if(!t.googleEventId) return true; // registado manualmente, nunca tocar
@@ -1247,6 +1249,10 @@
           if(!ev){
             removidos++;
             return false; // evento já não existe no Calendar -> remove o treino
+          }
+          if(String(ev.colorId||'') !== googleTrainingColorId){
+            removidosPorCor++;
+            return false; // a cor mudou (deixou de ser "treino dado") -> remove o treino
           }
           const novaData = (ev.start && (ev.start.date || (ev.start.dateTime||'').slice(0,10))) || t.data;
           const novaHora = extractHoraFromEvent(ev);
@@ -1293,11 +1299,12 @@
       });
 
       await saveData();
-      const houveMudanca = added > 0 || atualizados > 0 || removidos > 0;
+      const houveMudanca = added > 0 || atualizados > 0 || removidos > 0 || removidosPorCor > 0;
       if(!silent || houveMudanca){
         let msg = `${added} treino(s) importado(s)`;
         if(atualizados) msg += `, ${atualizados} data(s) atualizada(s)`;
         if(removidos) msg += `, ${removidos} removido(s) (evento apagado)`;
+        if(removidosPorCor) msg += `, ${removidosPorCor} removido(s) (cor mudada)`;
         if(jaExistia) msg += `, ${jaExistia} já existiam`;
         if(semCorrespondencia) msg += `, ${semCorrespondencia} sem cliente correspondente`;
         if(ambiguo) msg += `, ${ambiguo} ambíguo(s)`;
