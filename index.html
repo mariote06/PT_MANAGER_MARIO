@@ -210,6 +210,16 @@
   #pt-app-root .field-row .v { font-weight: 600; text-align: right; font-family: ui-monospace, monospace; font-size: 13px; }
   #pt-app-root .field-row a { color: var(--lime); text-decoration: none; }
 
+  #pt-app-root .treinos-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  #pt-app-root .treinos-table th { text-align: right; color: var(--text-dim); font-weight: 500; font-size: 11.5px; text-transform: uppercase; padding: 0 0 8px; }
+  #pt-app-root .treinos-table th:first-child, #pt-app-root .treinos-table td:first-child { text-align: left; }
+  #pt-app-root .treinos-table td { text-align: right; padding: 7px 0; border-bottom: 1px solid var(--surface2); font-family: ui-monospace, monospace; font-weight: 600; }
+  #pt-app-root .treinos-table tr:last-child td { border-bottom: none; }
+  #pt-app-root .treinos-table td:first-child { color: var(--text-muted); font-family: inherit; font-weight: 400; font-size: 14px; }
+  #pt-app-root .treinos-table .diff-pos { color: var(--ok); }
+  #pt-app-root .treinos-table .diff-neg { color: var(--coral); }
+  #pt-app-root .treinos-table .diff-zero { color: var(--text-dim); }
+
   #pt-app-root .progress-big { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0 4px; }
   #pt-app-root .stamp-lg {
     width: 30px; height: 30px; border-radius: 7px; border: 2px solid var(--line);
@@ -1837,12 +1847,19 @@
     const ptGroup60Interno = s.porServicoTipo['PT Group 60_Interno'] || 0;
     const ptGroup60Externo = s.porServicoTipo['PT Group 60_Externo'] || 0;
 
-    // Treinos DADOS de verdade nesse mês (data real do treino), não sessões compradas
+    // Treinos DADOS de verdade nesse mês (data real do treino), não sessões compradas —
+    // com a mesma estrutura detalhada de "Treinos Comprados": por serviço × Interno/Externo.
     const [start, end] = monthRange(key);
     let treinosDadosInterno = 0, treinosDadosExterno = 0;
+    let dadosPt30Interno = 0, dadosPt30Externo = 0, dadosPt60Interno = 0, dadosPt60Externo = 0, dadosPtGroup60Interno = 0, dadosPtGroup60Externo = 0;
     state.clients.forEach(c => {
       const n = (c.treinos||[]).filter(t => t.data >= start && t.data <= end).length;
-      if(c.tipo === 'Externo') treinosDadosExterno += n; else treinosDadosInterno += n;
+      if(n === 0) return;
+      const externo = c.tipo === 'Externo';
+      if(externo) treinosDadosExterno += n; else treinosDadosInterno += n;
+      if(c.servico === 'PT 30'){ if(externo) dadosPt30Externo += n; else dadosPt30Interno += n; }
+      else if(c.servico === 'PT 60'){ if(externo) dadosPt60Externo += n; else dadosPt60Interno += n; }
+      else if(c.servico === 'PT Group 60'){ if(externo) dadosPtGroup60Externo += n; else dadosPtGroup60Interno += n; }
     });
 
     return {
@@ -1851,6 +1868,7 @@
       totalRecebidoMes, valorRecebidoExterno, valorLiquidoExterno,
       pt30Interno, pt30Externo, pt60Interno, pt60Externo, ptGroup60Interno, ptGroup60Externo,
       treinosDadosInterno, treinosDadosExterno, treinosDadosTotal: treinosDadosInterno + treinosDadosExterno,
+      dadosPt30Interno, dadosPt30Externo, dadosPt60Interno, dadosPt60Externo, dadosPtGroup60Interno, dadosPtGroup60Externo,
       rowsInterno, rowsExterno
     };
   }
@@ -2433,21 +2451,27 @@
   function renderTreinosMesBody(key){
     const s = computeTreinosMes(key);
     const patamarLabel = s.patamar==='alto' ? `≥ ${PATAMAR_INTERNO} (majorada)` : `&lt; ${PATAMAR_INTERNO}`;
+    const linhasTreinos = [
+      ['PT 30 min — Interno', s.pt30Interno, s.dadosPt30Interno],
+      ['PT 30 min — Externo', s.pt30Externo, s.dadosPt30Externo],
+      ['PT 60 min — Interno', s.pt60Interno, s.dadosPt60Interno],
+      ['PT 60 min — Externo', s.pt60Externo, s.dadosPt60Externo],
+      ['PT Group 60 — Interno', s.ptGroup60Interno, s.dadosPtGroup60Interno],
+      ['PT Group 60 — Externo', s.ptGroup60Externo, s.dadosPtGroup60Externo],
+    ];
+    const linhasTreinosHtml = linhasTreinos.map(([label, comprados, dados]) => {
+      const diff = dados - comprados;
+      const diffCls = diff > 0 ? 'diff-pos' : (diff < 0 ? 'diff-neg' : 'diff-zero');
+      const diffTxt = diff > 0 ? `+${diff}` : String(diff);
+      return `<tr><td>${label}</td><td>${comprados}</td><td>${dados}</td><td class="${diffCls}">${diffTxt}</td></tr>`;
+    }).join('');
     return `
       <div class="card">
-        <h3>Treinos comprados</h3>
-        <div class="field-row"><span class="k">PT 30 min — Interno</span><span class="v">${s.pt30Interno}</span></div>
-        <div class="field-row"><span class="k">PT 30 min — Externo</span><span class="v">${s.pt30Externo}</span></div>
-        <div class="field-row"><span class="k">PT 60 min — Interno</span><span class="v">${s.pt60Interno}</span></div>
-        <div class="field-row"><span class="k">PT 60 min — Externo</span><span class="v">${s.pt60Externo}</span></div>
-        <div class="field-row"><span class="k">PT Group 60 — Interno</span><span class="v">${s.ptGroup60Interno}</span></div>
-        <div class="field-row"><span class="k">PT Group 60 — Externo</span><span class="v">${s.ptGroup60Externo}</span></div>
-      </div>
-      <div class="card">
-        <h3>Treinos dados</h3>
-        <div class="field-row"><span class="k">Total de sessões</span><span class="v">${s.treinosDadosTotal}</span></div>
-        <div class="field-row"><span class="k">Interno</span><span class="v">${s.treinosDadosInterno}</span></div>
-        <div class="field-row"><span class="k">Externo</span><span class="v">${s.treinosDadosExterno}</span></div>
+        <h3>Treinos</h3>
+        <table class="treinos-table">
+          <thead><tr><th></th><th>Comprados</th><th>Dados</th><th>Diferença</th></tr></thead>
+          <tbody>${linhasTreinosHtml}</tbody>
+        </table>
       </div>
       <div class="card">
         <h3>Resumo de treinos</h3>
