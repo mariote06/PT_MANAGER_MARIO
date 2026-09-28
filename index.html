@@ -346,7 +346,15 @@
     background: var(--surface); width: 100%; max-width: var(--app-max-width); border-radius: 18px 18px 0 0;
     padding: 20px 18px calc(20px + env(safe-area-inset-bottom, 0px)); border: 1px solid var(--line); border-bottom: none;
   }
+  #pt-app-root .modal-sheet { max-height: 88vh; overflow-y: auto; }
   #pt-app-root .modal-sheet h3 { margin: 0 0 6px; font-size: 16px; }
+  #pt-app-root .pop-acoes { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  #pt-app-root .pop-chip {
+    background: var(--surface2); color: var(--text); border: 1px solid var(--line); border-radius: 20px;
+    padding: 6px 12px; font-size: 12.5px; font-weight: 700; cursor: pointer; min-height: 32px; min-width: 34px;
+  }
+  #pt-app-root .pop-chip-main { background: var(--lime); color: #12140c; border-color: transparent; }
+  #pt-app-root .pop-chip-label { font-size: 11.5px; color: var(--text-muted); margin-left: 4px; }
   #pt-app-root .modal-sheet p { margin: 0 0 14px; color: var(--text-muted); font-size: 13.5px; line-height: 1.5; }
 
   #pt-app-root ::-webkit-scrollbar { width: 0; height: 0; }
@@ -1001,6 +1009,55 @@
     });
     if(anyChange) await saveData();
     return anyChange;
+  }
+
+  // ---- Ações rápidas do pop-up inicial (Renovar / Prolongar / Reverter) ----
+  // "escolhas" guarda, só enquanto o pop-up está aberto, o estado anterior de cada cliente
+  // para se poder reverter a escolha com um toque.
+  function snapshotCaderneta(c){
+    return {
+      inicioCadernetaAtual: c.inicioCadernetaAtual,
+      cicloValidade: c.cicloValidade,
+      histLen: (c.historico||[]).length,
+      autoRenovar: !!c.autoRenovar
+    };
+  }
+  // Caderneta já expirada -> renova já. Ainda não expirada -> agenda a renovação para quando a data chegar.
+  function popupRenovar(c, escolhas){
+    if(c.cicloValidade && c.cicloValidade < todayISO()){
+      const snap = snapshotCaderneta(c);
+      renewClientIfOverdue(c);
+      escolhas[c.id] = { tipo: 'renovado', snap };
+      return 'renovado';
+    }
+    c.autoRenovar = true;
+    return 'agendada';
+  }
+  function popupProlongar(c, semanas, escolhas){
+    const snap = snapshotCaderneta(c);
+    const antes = c.cicloValidade;
+    const nova = addDays(antes, semanas * 7);
+    logChange(c, `Prolongamento (+${semanas} semana(s))`, [
+      { campo: 'cicloValidade', rotulo: 'Validade', antes, depois: nova }
+    ]);
+    c.cicloValidade = nova;
+    c.autoRenovar = false; // prolongar substitui uma renovação que estivesse agendada
+    escolhas[c.id] = { tipo: 'prolongado', semanas, snap };
+  }
+  function popupReverter(c, escolhas){
+    const esc = escolhas[c.id];
+    if(esc){
+      const sn = esc.snap;
+      const adicionadas = (c.historico||[]).length - sn.histLen;
+      if(adicionadas > 0) c.historico.splice(0, adicionadas);
+      c.inicioCadernetaAtual = sn.inicioCadernetaAtual;
+      c.cicloValidade = sn.cicloValidade;
+      c.autoRenovar = sn.autoRenovar;
+      delete escolhas[c.id];
+      return true;
+    }
+    if(c.autoRenovar){ c.autoRenovar = false; return true; }
+    return false;
   }
 
   // Calcula cadernetas expiradas e a expirar dentro de 1 semana, para a notificação ao abrir a app.
@@ -2822,12 +2879,17 @@
 
   function showModal(){
     let mb = root.querySelector('.modal-backdrop');
+    const antigaSheet = mb ? mb.querySelector('.modal-sheet') : null;
+    const scrollAnterior = antigaSheet && mb.dataset.type === (state.modal && state.modal.type) ? antigaSheet.scrollTop : 0;
     if(mb) mb.remove();
     if(!state.modal) return;
     mb = document.createElement('div');
     mb.className = 'modal-backdrop';
+    mb.dataset.type = state.modal.type;
     mb.innerHTML = renderModal(state.modal);
     root.appendChild(mb);
+    const sheet = mb.querySelector('.modal-sheet');
+    if(sheet && scrollAnterior) sheet.scrollTop = scrollAnterior;
     bindModalEvents(mb);
   }
 
@@ -2875,37 +2937,44 @@
     if(modal.type === 'notificacaoCadernetas'){
       const expiradas = (modal.expiradasIds||[]).map(id => getClient(id)).filter(Boolean);
       const expirando = (modal.expirandoIds||[]).map(id => getClient(id)).filter(Boolean);
+      const escolhas = modal.escolhas || {};
+      const linha = (cl, corData) => {
+        const esc = escolhas[cl.id];
+        let estado = '';
+        if(esc && esc.tipo === 'prolongado') estado = `✓ Prolongada +${esc.semanas} sem.`;
+        else if(esc && esc.tipo === 'renovado') estado = '✓ Renovada';
+        else if(cl.autoRenovar) estado = '✓ Renovação agendada';
+        const acoes = estado
+          ? `<span class="badge-inline bday" style="margin-left:0">${estado}</span>
+             <button class="pop-chip" data-pop-reverter="${cl.id}">↩ Reverter</button>`
+          : `<button class="pop-chip pop-chip-main" data-pop-renovar="${cl.id}">Renovar</button>
+             <span class="pop-chip-label">Prolongar (semanas):</span>
+             ${[1,2,3,4].map(n => `<button class="pop-chip" data-pop-prolongar="${cl.id}|${n}">${n}</button>`).join('')}`;
+        return `
+          <div class="list-item" style="flex-direction:column;align-items:stretch;gap:8px">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+              <span data-open-client="${cl.id}" style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted">${escapeHtml(cl.nome)}</span>
+              <span class="mono" style="color:${corData}">${fmtDateShort(cl.cicloValidade)}</span>
+            </div>
+            <div class="pop-acoes">${acoes}</div>
+          </div>`;
+      };
+      const pendentesExpiradas = expiradas.filter(cl => !escolhas[cl.id]);
       return `
         <div class="modal-sheet">
           <h3>Cadernetas a acompanhar</h3>
           ${expiradas.length > 0 ? `
             <p style="color:var(--coral);font-weight:700;margin:0 0 6px">Expiradas (${expiradas.length})</p>
-            ${expiradas.map(cl => `
-              <div class="list-item">
-                <span data-open-client="${cl.id}" style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted">${escapeHtml(cl.nome)}</span>
-                <span class="mono" style="color:var(--coral)">${fmtDateShort(cl.cicloValidade)}</span>
-              </div>
-            `).join('')}
+            ${expiradas.map(cl => linha(cl, 'var(--coral)')).join('')}
           ` : ''}
           ${expirando.length > 0 ? `
             <p style="color:var(--amber);font-weight:700;margin:16px 0 6px">A expirar na próxima semana (${expirando.length})</p>
-            ${expirando.map(cl => `
-              <div class="list-item">
-                <span data-open-client="${cl.id}" style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted">${escapeHtml(cl.nome)}</span>
-                <span style="display:flex;align-items:center;gap:8px">
-                  <span class="mono" style="color:var(--amber)">${fmtDateShort(cl.cicloValidade)}</span>
-                  ${cl.autoRenovar
-                    ? `<span class="badge-inline bday">✓ agendada</span>`
-                    : `<button class="btn btn-secondary" data-marcar-renovar="${cl.id}" style="width:auto;padding:5px 12px;font-size:11.5px;margin-top:0">Renovar</button>`
-                  }
-                </span>
-              </div>
-            `).join('')}
+            ${expirando.map(cl => linha(cl, 'var(--amber)')).join('')}
           ` : ''}
-          <p style="color:var(--text-muted);font-size:12px;margin:14px 0 0">A renovação não é automática — só acontece quando confirmares aqui, ou individualmente na ficha de cada cliente. Tocar em "Renovar" numa caderneta ainda não expirada agenda-a para renovar sozinha assim que a data chegar, sem pedir confirmação outra vez.</p>
+          <p style="color:var(--text-muted);font-size:12px;margin:14px 0 0">Renovar numa caderneta expirada renova logo; numa que ainda não expirou, agenda a renovação para quando a data chegar. Prolongar adia a validade já pelas semanas escolhidas (o cliente não fez todos os treinos). Podes sempre desfazer com "↩ Reverter".</p>
           <div class="btn-row" style="margin-top:16px">
             <button class="btn btn-secondary" id="modalCancel">Fechar</button>
-            ${expiradas.length > 0 ? `<button class="btn btn-primary" id="modalConfirmRenovarTodas">Renovar todas as expiradas</button>` : ''}
+            ${pendentesExpiradas.length > 0 ? `<button class="btn btn-primary" id="modalConfirmRenovarTodas">Renovar as expiradas sem escolha (${pendentesExpiradas.length})</button>` : ''}
           </div>
         </div>`;
     }
@@ -3359,11 +3428,16 @@
 
   function bindModalEvents(mb){
     const cancel = mb.querySelector('#modalCancel');
-    if(cancel) cancel.onclick = () => { state.modal = null; showModal(); };
+    if(cancel) cancel.onclick = () => {
+      const alterou = state.modal && state.modal.alterou;
+      state.modal = null; showModal();
+      if(alterou) render();
+    };
 
     const confirmRenovarTodas = mb.querySelector('#modalConfirmRenovarTodas');
     if(confirmRenovarTodas) confirmRenovarTodas.onclick = async () => {
-      const ids = state.modal.expiradasIds || [];
+      const escolhasAtuais = state.modal.escolhas || {};
+      const ids = (state.modal.expiradasIds || []).filter(id => !escolhasAtuais[id]);
       await renewAllExpiredClients(ids);
       state.modal = null;
       showToast(`${ids.length} caderneta(s) renovada(s)`);
@@ -3484,14 +3558,44 @@
       render();
     };
 
-    mb.querySelectorAll('[data-marcar-renovar]').forEach(btn => {
+    // Pop-up de cadernetas: Renovar / Prolongar N semanas / Reverter
+    const aposEscolhaPopup = async () => {
+      state.modal.alterou = true;
+      await saveData();
+      showModal(); // volta a desenhar o pop-up com o novo estado
+    };
+    mb.querySelectorAll('[data-pop-renovar]').forEach(btn => {
       btn.onclick = async () => {
-        const cl = getClient(btn.dataset.marcarRenovar);
-        if(cl){
-          cl.autoRenovar = true;
-          await saveData();
-          showToast(`${cl.nome.split(' ')[0]}: renovação agendada`);
-          showModal(); // volta a desenhar o mesmo modal, agora com "✓ agendada"
+        const cl = getClient(btn.dataset.popRenovar);
+        if(!cl) return;
+        state.modal.escolhas = state.modal.escolhas || {};
+        const r = popupRenovar(cl, state.modal.escolhas);
+        showToast(`${cl.nome.split(' ')[0]}: ${r === 'renovado' ? 'caderneta renovada' : 'renovação agendada'}`);
+        await aposEscolhaPopup();
+      };
+    });
+    mb.querySelectorAll('[data-pop-prolongar]').forEach(btn => {
+      btn.onclick = async () => {
+        const [id, sem] = btn.dataset.popProlongar.split('|');
+        const cl = getClient(id);
+        const semanas = parseInt(sem) || 1;
+        if(!cl) return;
+        state.modal.escolhas = state.modal.escolhas || {};
+        popupProlongar(cl, semanas, state.modal.escolhas);
+        if(cl.googleEventId && googleAuth.token) await syncClientToGoogleCalendar(cl);
+        showToast(`${cl.nome.split(' ')[0]}: prolongada ${semanas} semana(s)`);
+        await aposEscolhaPopup();
+      };
+    });
+    mb.querySelectorAll('[data-pop-reverter]').forEach(btn => {
+      btn.onclick = async () => {
+        const cl = getClient(btn.dataset.popReverter);
+        if(!cl) return;
+        state.modal.escolhas = state.modal.escolhas || {};
+        if(popupReverter(cl, state.modal.escolhas)){
+          if(cl.googleEventId && googleAuth.token) await syncClientToGoogleCalendar(cl);
+          showToast(`${cl.nome.split(' ')[0]}: escolha revertida`);
+          await aposEscolhaPopup();
         }
       };
     });
