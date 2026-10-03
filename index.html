@@ -131,6 +131,7 @@
   #pt-app-root .client-card.status-ok { border-left-color: var(--ok); }
   #pt-app-root .client-card.status-soon { border-left-color: var(--amber); }
   #pt-app-root .client-card.status-expired { border-left-color: var(--coral); }
+  #pt-app-root .client-card.status-suspenso { border-left-color: var(--text-dim); opacity: 0.6; }
   #pt-app-root .client-card .row1 { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
   #pt-app-root .client-card .name { font-weight: 700; font-size: 15.5px; }
   #pt-app-root .client-code {
@@ -562,16 +563,23 @@
 
   // Combina datas reais conhecidas (histórico) com extrapolação segura só para a frente
   // (a partir da validade atual — nunca para trás, onde prolongamentos passados quebrariam a grelha de 28 dias).
+  // Um cliente suspenso deixa de contar a partir (inclusive) da data de suspensão — tudo o
+  // que já tinha acontecido antes disso mantém-se normalmente.
+  function isClientCountableOn(client, dateIso){
+    if(!client.suspenso || !client.dataSuspensao) return true;
+    return dateIso < client.dataSuspensao;
+  }
+
   function renewalDatesInMonthForClient(client, monthStartIso, monthEndIso){
     const results = new Set();
     getKnownValidadeHistory(client).forEach(d => {
-      if(d >= monthStartIso && d <= monthEndIso) results.add(d);
+      if(d >= monthStartIso && d <= monthEndIso && isClientCountableOn(client, d)) results.add(d);
     });
     if(client.cicloValidade){
       let d = client.cicloValidade;
       let guard = 0;
       while(d <= monthEndIso && guard < 1000){
-        if(d >= monthStartIso) results.add(d);
+        if(d >= monthStartIso && isClientCountableOn(client, d)) results.add(d);
         d = addDays(d, 28);
         guard++;
       }
@@ -605,13 +613,13 @@
   function cadernetaStartDatesInMonthForClient(client, monthStartIso, monthEndIso){
     const results = new Set();
     getKnownInicioCadernetaHistory(client).forEach(d => {
-      if(d >= monthStartIso && d <= monthEndIso) results.add(d);
+      if(d >= monthStartIso && d <= monthEndIso && isClientCountableOn(client, d)) results.add(d);
     });
     if(client.inicioCadernetaAtual){
       let d = client.inicioCadernetaAtual;
       let guard = 0;
       while(d <= monthEndIso && guard < 1000){
-        if(d >= monthStartIso) results.add(d);
+        if(d >= monthStartIso && isClientCountableOn(client, d)) results.add(d);
         d = addDays(d, 28);
         guard++;
       }
@@ -627,17 +635,17 @@
   // semanas a partir do início, que deixaria de ser real assim que houvesse um prolongamento.
   function receitaDatesInMonthForClient(client, monthStartIso, monthEndIso){
     const results = new Set();
-    if(client.inicioCadernetaAtual && client.inicioCadernetaAtual >= monthStartIso && client.inicioCadernetaAtual <= monthEndIso){
+    if(client.inicioCadernetaAtual && client.inicioCadernetaAtual >= monthStartIso && client.inicioCadernetaAtual <= monthEndIso && isClientCountableOn(client, client.inicioCadernetaAtual)){
       results.add(client.inicioCadernetaAtual);
     }
     getKnownInicioCadernetaHistory(client).forEach(d => {
-      if(d >= monthStartIso && d <= monthEndIso) results.add(d);
+      if(d >= monthStartIso && d <= monthEndIso && isClientCountableOn(client, d)) results.add(d);
     });
     if(client.cicloValidade){
       let d = client.cicloValidade;
       let guard = 0;
       while(d <= monthEndIso && guard < 1000){
-        if(d >= monthStartIso) results.add(d);
+        if(d >= monthStartIso && isClientCountableOn(client, d)) results.add(d);
         d = addDays(d, 28);
         guard++;
       }
@@ -913,6 +921,8 @@
     if(c.autoRenovar === undefined) c.autoRenovar = false;
     if(c.cadernetaBoundariesRemovidas === undefined) c.cadernetaBoundariesRemovidas = [];
     if(c.cadernetaBoundariesConfirmadas === undefined) c.cadernetaBoundariesConfirmadas = [];
+    if(c.suspenso === undefined) c.suspenso = false;
+    if(c.dataSuspensao === undefined) c.dataSuspensao = '';
     if(c.proximoTreino === undefined) c.proximoTreino = null;
     if(c.concentrarComprasNoMes === undefined) c.concentrarComprasNoMes = false;
     return c;
@@ -924,7 +934,8 @@
     atividade: 'Atividade', sessoesEsperadas: 'Sessões esperadas', cicloInicio: 'Início do Serviço',
     cicloValidade: 'Validade', tipo: 'Tipo', servico: 'Serviço', valorCaderneta: 'Valor da caderneta',
     corGoogle: 'Cor no Google Calendar', inicioCadernetaAtual: 'Início da Caderneta', pagoAte: 'Pago adiantado até',
-    concentrarComprasNoMes: 'Concentrar compras no mês do pagamento'
+    concentrarComprasNoMes: 'Concentrar compras no mês do pagamento', suspenso: 'Serviço suspenso',
+    dataSuspensao: 'Data de suspensão'
   };
   function formatChangeValue(campo, val){
     if(campo === 'cicloValidade'){
@@ -941,6 +952,12 @@
     }
     if(campo === 'cadernetaBoundariesRemovidas'){
       return Array.isArray(val) && val.length > 0 ? val.map(d => fmtDateShort(d)).join(', ') : '—';
+    }
+    if(campo === 'suspenso'){
+      return val ? 'Suspenso' : 'Ativo';
+    }
+    if(campo === 'dataSuspensao'){
+      return val ? fmtDateShort(val) : '—';
     }
     if(val === '' || val === null || val === undefined) return '—';
     return String(val);
@@ -1066,7 +1083,7 @@
     const expiradas = [];
     const expirando3Semanas = [];
     state.clients.forEach(c => {
-      if(!c.cicloValidade) return;
+      if(!c.cicloValidade || c.suspenso) return;
       if(c.cicloValidade < today){
         expiradas.push(c);
       } else {
@@ -1084,7 +1101,7 @@
     const today = todayISO();
     let anyChange = false;
     state.clients.forEach(c => {
-      if(c.autoRenovar && c.cicloValidade && c.cicloValidade < today){
+      if(c.autoRenovar && !c.suspenso && c.cicloValidade && c.cicloValidade < today){
         if(renewClientIfOverdue(c)){
           c.autoRenovar = false;
           anyChange = true;
@@ -1679,6 +1696,7 @@
             <button class="pill ${state.filterTipo==='all'?'active':''}" data-filtertipo="all">Todos</button>
             <button class="pill ${state.filterTipo==='Interno'?'active':''}" data-filtertipo="Interno">Interno</button>
             <button class="pill ${state.filterTipo==='Externo'?'active':''}" data-filtertipo="Externo">Externo</button>
+            ${state.clients.some(c=>c.suspenso) ? `<button class="pill ${state.filterTipo==='Suspenso'?'active':''}" data-filtertipo="Suspenso">Suspensos (${state.clients.filter(c=>c.suspenso).length})</button>` : ''}
           </div>
           <label class="btn btn-secondary import-excel-btn">
             📥 Importar clientes de Excel
@@ -1715,6 +1733,7 @@
       .sort((a,b) => a.d - b.d);
 
     const expiring = state.clients
+      .filter(c => !c.suspenso)
       .map(c => ({c, d: daysBetween(today, c.cicloValidade)}))
       .filter(x => x.d <= 14)
       .sort((a,b) => a.d - b.d);
@@ -1767,7 +1786,13 @@
     const q = state.search.trim().toLowerCase();
     let list = state.clients.slice().sort((a,b) => a.nome.localeCompare(b.nome));
     if(q) list = list.filter(c => c.nome.toLowerCase().includes(q) || String(c.id).toLowerCase().includes(q));
-    if(state.filterTipo !== 'all') list = list.filter(c => c.tipo === state.filterTipo);
+    if(state.filterTipo === 'Suspenso'){
+      list = list.filter(c => c.suspenso);
+    } else {
+      // A bolsa de suspensos fica fora da lista normal — só aparece com o filtro "Suspensos".
+      list = list.filter(c => !c.suspenso);
+      if(state.filterTipo !== 'all') list = list.filter(c => c.tipo === state.filterTipo);
+    }
     return list;
   }
 
@@ -1790,13 +1815,13 @@
       const bdaySoon = daysToNextBirthday(c.nascimento) <= 7;
       const tipoCls = c.tipo === 'Externo' ? 'externo' : 'interno';
       return `
-        <div class="client-card status-${st}" data-open="${c.id}">
+        <div class="client-card ${c.suspenso ? 'status-suspenso' : `status-${st}`}" data-open="${c.id}">
           <div class="row1">
             <div class="name"><span class="client-code">#${escapeHtml(c.id)}</span> ${escapeHtml(c.nome)}${bdaySoon?'<span class="badge-inline bday">🎂</span>':''}</div>
-            <div class="validade">até ${fmtDateShort(c.cicloValidade)}</div>
+            <div class="validade">${c.suspenso ? `suspenso desde ${fmtDateShort(c.dataSuspensao)}` : `até ${fmtDateShort(c.cicloValidade)}`}</div>
           </div>
           <div class="atividade">${escapeHtml(c.atividade || 'Sem atividade definida')} <span class="badge-tipo ${tipoCls}">${c.tipo}</span></div>
-          <div class="stamps">${stamps}<span class="stamps-label">${done}/${total}</span></div>
+          ${c.suspenso ? '' : `<div class="stamps">${stamps}<span class="stamps-label">${done}/${total}</span></div>`}
         </div>
       `;
     }).join('');
@@ -1816,7 +1841,7 @@
         // esperadas) de uma vez, no mês em que o pagamento foi feito — em vez de
         // espalhar pelas cadernetas normais.
         (c.pagamentos||[]).forEach(p => {
-          if(p.data >= start && p.data <= end){
+          if(p.data >= start && p.data <= end && isClientCountableOn(c, p.data)){
             const cadernetas = p.cadernetas || 1;
             const sessoes = (c.sessoesEsperadas || 0) * cadernetas;
             for(let i = 0; i < sessoes; i++){
@@ -1910,7 +1935,7 @@
     let treinosDadosInterno = 0, treinosDadosExterno = 0;
     let dadosPt30Interno = 0, dadosPt30Externo = 0, dadosPt60Interno = 0, dadosPt60Externo = 0, dadosPtGroup60Interno = 0, dadosPtGroup60Externo = 0;
     state.clients.forEach(c => {
-      const n = (c.treinos||[]).filter(t => t.data >= start && t.data <= end).length;
+      const n = (c.treinos||[]).filter(t => t.data >= start && t.data <= end && isClientCountableOn(c, t.data)).length;
       if(n === 0) return;
       const externo = c.tipo === 'Externo';
       if(externo) treinosDadosExterno += n; else treinosDadosInterno += n;
@@ -1968,7 +1993,7 @@
           // Fica tudo concentrado no mês de início do período pago — a totalidade das
           // sessões e do valor conta de uma vez só, no mês da 1ª caderneta, tal como já
           // acontece no Treinos/Mês para estes clientes (nunca se espalha por vários meses).
-          if(inicioRef >= start && inicioRef <= end){
+          if(inicioRef >= start && inicioRef <= end && isClientCountableOn(c, inicioRef)){
             rows.push({
               c, pagamento: p,
               cadernetas,
@@ -1984,7 +2009,7 @@
         // pode assim espalhar-se por vários meses, cada um com a sua parte proporcional.
         let d = inicioRef;
         for(let i = 0; i < cadernetas; i++){
-          if(d >= start && d <= end){
+          if(d >= start && d <= end && isClientCountableOn(c, d)){
             rows.push({
               c, pagamento: p,
               cadernetas: 1,
@@ -2679,6 +2704,13 @@
       </div>
       <div class="overlay-body">
 
+        ${c.suspenso ? `<div class="card" style="border-color:var(--text-dim)">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+            <span><strong>Serviço suspenso</strong><br><span style="color:var(--text-muted);font-size:12.5px">desde ${fmtDateShort(c.dataSuspensao)} — sem contagem nem contabilização a partir dessa data</span></span>
+            <button class="btn btn-secondary" id="btnReativar">Reativar</button>
+          </div>
+        </div>` : ''}
+
         <div class="card">
           <h3>Informação</h3>
           <div class="field-row"><span class="k">Código</span><span class="v">${escapeHtml(c.id)}</span></div>
@@ -2711,6 +2743,9 @@
             <button class="btn btn-secondary" id="btnRenovar">Renovar (+4 sem.)</button>
             <button class="btn btn-secondary" id="btnProlongar">Prolongar</button>
           </div>
+          ${!c.suspenso ? `<div class="btn-row" style="margin-top:8px">
+            <button class="btn btn-secondary" id="btnSuspender" style="color:var(--coral)">Suspender serviço</button>
+          </div>` : ''}
         </div>
 
         <div class="card">
@@ -2918,6 +2953,30 @@
           <div class="btn-row" style="margin-top:16px">
             <button class="btn btn-secondary" id="modalCancel">Cancelar</button>
             <button class="btn btn-primary" id="modalConfirmDeleteCaderneta" style="background:var(--coral)">Eliminar</button>
+          </div>
+        </div>`;
+    }
+    if(modal.type === 'suspenderCliente'){
+      return `
+        <div class="modal-sheet">
+          <h3>Suspender serviço</h3>
+          <p>A partir da data escolhida, ${escapeHtml(c.nome)} deixa de contar para sessões, comissões e receita (Treinos/Mês, Resumo Mensal, relatório Excel). O histórico até essa data mantém-se tal como está.</p>
+          <label>Suspender a partir de</label>
+          <input type="date" id="m_dataSuspensao" value="${todayISO()}">
+          <div class="btn-row" style="margin-top:16px">
+            <button class="btn btn-secondary" id="modalCancel">Cancelar</button>
+            <button class="btn btn-primary" id="modalConfirmSuspender" style="background:var(--coral)">Suspender</button>
+          </div>
+        </div>`;
+    }
+    if(modal.type === 'reativarCliente'){
+      return `
+        <div class="modal-sheet">
+          <h3>Reativar serviço</h3>
+          <p>${escapeHtml(c.nome)} volta a contar normalmente para sessões, comissões e receita a partir de hoje.</p>
+          <div class="btn-row" style="margin-top:16px">
+            <button class="btn btn-secondary" id="modalCancel">Cancelar</button>
+            <button class="btn btn-primary" id="modalConfirmReativar">Reativar</button>
           </div>
         </div>`;
     }
@@ -3280,6 +3339,12 @@
     const btnProlongar = ov.querySelector('#btnProlongar');
     if(btnProlongar) btnProlongar.onclick = () => { state.modal = {type:'prolongar', id: state.activeId}; showModal(); };
 
+    const btnSuspender = ov.querySelector('#btnSuspender');
+    if(btnSuspender) btnSuspender.onclick = () => { state.modal = {type:'suspenderCliente', id: state.activeId}; showModal(); };
+
+    const btnReativar = ov.querySelector('#btnReativar');
+    if(btnReativar) btnReativar.onclick = () => { state.modal = {type:'reativarCliente', id: state.activeId}; showModal(); };
+
     const btnAddPag = ov.querySelector('#btnAddPagamento');
     if(btnAddPag) btnAddPag.onclick = () => { state.modal = {type:'pagamento', id: state.activeId}; showModal(); };
 
@@ -3554,6 +3619,40 @@
       }
       await saveData();
       showToast('Caderneta eliminada — fundida com a anterior');
+      state.modal = null;
+      render();
+    };
+
+    const confirmSuspender = mb.querySelector('#modalConfirmSuspender');
+    if(confirmSuspender) confirmSuspender.onclick = async () => {
+      const c = getClient(state.modal.id);
+      const data = mb.querySelector('#m_dataSuspensao').value || todayISO();
+      logChange(c, `Suspensão do serviço (a partir de ${fmtDateShort(data)})`, [
+        { campo: 'suspenso', rotulo: 'Suspenso', antes: false, depois: true },
+        { campo: 'dataSuspensao', rotulo: 'Data de suspensão', antes: c.dataSuspensao || '', depois: data }
+      ]);
+      c.suspenso = true;
+      c.dataSuspensao = data;
+      c.ativo = false;
+      c.autoRenovar = false;
+      await saveData();
+      showToast('Serviço suspenso');
+      state.modal = null;
+      render();
+    };
+
+    const confirmReativar = mb.querySelector('#modalConfirmReativar');
+    if(confirmReativar) confirmReativar.onclick = async () => {
+      const c = getClient(state.modal.id);
+      logChange(c, `Reativação do serviço (estava suspenso desde ${fmtDateShort(c.dataSuspensao)})`, [
+        { campo: 'suspenso', rotulo: 'Suspenso', antes: true, depois: false }
+      ]);
+      c.suspenso = false;
+      c.ativo = true;
+      // sem mais suspensos a pílula "Suspensos" desaparece — volta à lista normal
+      if(state.filterTipo === 'Suspenso' && !state.clients.some(x => x.suspenso)) state.filterTipo = 'all';
+      await saveData();
+      showToast('Serviço reativado');
       state.modal = null;
       render();
     };
