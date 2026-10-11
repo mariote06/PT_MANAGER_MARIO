@@ -359,6 +359,22 @@
   #pt-app-root .modal-sheet p { margin: 0 0 14px; color: var(--text-muted); font-size: 13.5px; line-height: 1.5; }
 
   #pt-app-root ::-webkit-scrollbar { width: 0; height: 0; }
+
+  /* ===== PIN ===== */
+  #pinLock{--bg:#0f1115;--surface:#191c22;--line:#303643;--text:#eef1f5;--text-muted:#8a92a6;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;position:fixed;inset:0;z-index:99999;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;color:var(--text);user-select:none;-webkit-user-select:none}
+  #pinLock .pin-title{font-size:20px;font-weight:700;margin-bottom:6px;text-align:center}
+  #pinLock .pin-sub{font-size:13px;color:var(--text-muted);margin-bottom:22px;min-height:18px;text-align:center}
+  #pinLock .pin-sub.err{color:#ef4444}
+  #pinLock .pin-dots{display:flex;gap:14px;margin-bottom:26px;min-height:16px}
+  #pinLock .pin-dot{width:14px;height:14px;border-radius:50%;border:2px solid var(--text-muted)}
+  #pinLock .pin-dot.on{background:var(--text);border-color:var(--text)}
+  #pinLock .pin-pad{display:grid;grid-template-columns:repeat(3,76px);gap:14px}
+  #pinLock .pin-key{height:64px;border-radius:50%;border:1px solid var(--line);background:var(--surface);color:var(--text);font-size:24px;font-weight:600;cursor:pointer;font-family:inherit}
+  #pinLock .pin-key:active{filter:brightness(1.4)}
+  #pinLock .pin-key.sm{font-size:14px}
+  #pinLock .pin-cancel{margin-top:22px;background:none;border:none;color:var(--text-muted);font-size:14px;cursor:pointer;padding:8px 16px;font-family:inherit}
+  #pinLock.shake .pin-dots{animation:pinShake .35s}
+  @keyframes pinShake{0%,100%{transform:translateX(0)}25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}
 </style>
 
 <script>
@@ -2440,7 +2456,7 @@
         <input type="file" id="importFile" accept="application/json">
       </div>
     `;
-    return toggleHtml + body + reportHtml + syncHtml + renderGoogleCalendarCard() + backupHtml;
+    return toggleHtml + body + reportHtml + renderPinCard() + syncHtml + renderGoogleCalendarCard() + backupHtml;
   }
 
   function renderGoogleCalendarCard(){
@@ -3258,6 +3274,7 @@
     if(btnDisconnectGoogle) btnDisconnectGoogle.onclick = () => disconnectGoogleCalendar();
 
 
+    bindPinCard();
     const btnSyncNew = root.querySelector('#btnSyncNew');
     if(btnSyncNew) btnSyncNew.onclick = () => connectSyncFile(true);
 
@@ -3881,6 +3898,182 @@
       }
     }, { passive: true });
   })();
+
+  // ===================== PIN DE ACESSO =====================
+  const PIN_KEY = 'pt_pin_v1';
+  const PIN_FAIL_KEY = 'pt_pin_fail_v1';
+  const PIN_RELOCK_MS = 60000;
+  let pinHiddenAt = 0;
+  let pinOpen = false;
+
+  function pinGetCfg(){
+    try{ const r = localStorage.getItem(PIN_KEY); return r ? JSON.parse(r) : null; }catch(e){ return null; }
+  }
+  function pinGetFail(){
+    try{ return JSON.parse(localStorage.getItem(PIN_FAIL_KEY)) || {n:0, until:0}; }catch(e){ return {n:0, until:0}; }
+  }
+  function pinSetFail(f){ try{ localStorage.setItem(PIN_FAIL_KEY, JSON.stringify(f)); }catch(e){} }
+  async function pinHash(pin, salt){
+    const data = salt + ':' + pin;
+    try{
+      if(globalThis.crypto && crypto.subtle){
+        const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(data));
+        return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+      }
+    }catch(e){}
+    let h = 5381; for(let i=0;i<data.length;i++){ h = ((h<<5)+h+data.charCodeAt(i))|0; } return 'f' + h;
+  }
+  function pinNewSalt(){
+    try{ const a = new Uint8Array(12); crypto.getRandomValues(a); return Array.from(a).map(b=>b.toString(16).padStart(2,'0')).join(''); }
+    catch(e){ return String(Date.now()) + Math.random().toString(16).slice(2); }
+  }
+  async function pinCheck(pin){
+    const cfg = pinGetCfg(); if(!cfg) return true;
+    return (await pinHash(pin, cfg.salt)) === cfg.hash;
+  }
+  async function pinSave(pin){
+    const salt = pinNewSalt();
+    localStorage.setItem(PIN_KEY, JSON.stringify({salt, hash: await pinHash(pin, salt), len: pin.length}));
+    pinSetFail({n:0, until:0});
+  }
+
+  // modos: 'unlock' | 'verify' (devolve via cb) | 'set' (novo + confirmar)
+  function pinScreen(opts){
+    return new Promise(resolve => {
+      const old = document.getElementById('pinLock'); if(old) old.remove();
+      pinOpen = true;
+      const cfg = pinGetCfg();
+      const mode = opts.mode;
+      let stage = mode === 'set' ? 'new' : 'check';
+      let entry = '', firstPin = '';
+      const ov = document.createElement('div');
+      ov.id = 'pinLock';
+      ov.innerHTML = `
+        <div class="pin-title"></div>
+        <div class="pin-sub"></div>
+        <div class="pin-dots"></div>
+        <div class="pin-pad">
+          ${[1,2,3,4,5,6,7,8,9].map(n=>`<button class="pin-key" data-k="${n}">${n}</button>`).join('')}
+          <button class="pin-key sm" data-k="del">⌫</button>
+          <button class="pin-key" data-k="0">0</button>
+          <button class="pin-key sm" data-k="ok">OK</button>
+        </div>
+        ${opts.cancelable ? '<button class="pin-cancel" data-k="cancel">Cancelar</button>' : ''}
+      `;
+      document.body.appendChild(ov);
+      const titleEl = ov.querySelector('.pin-title'), subEl = ov.querySelector('.pin-sub'), dotsEl = ov.querySelector('.pin-dots');
+
+      function setText(){
+        let t, sub;
+        if(stage === 'new'){ t = opts.title || 'Definir PIN'; sub = 'Escolhe um PIN de 4 a 6 dígitos e carrega em OK'; }
+        else if(stage === 'confirm'){ t = 'Confirmar PIN'; sub = 'Repete o PIN'; }
+        else { t = opts.title || 'PT Manager'; sub = opts.sub || 'Introduz o PIN'; }
+        titleEl.textContent = t;
+        if(!subEl.classList.contains('err') || subEl.dataset.keep !== '1') subEl.textContent = sub;
+      }
+      function drawDots(){
+        const n = (stage === 'check' && cfg) ? cfg.len : Math.max(4, entry.length);
+        dotsEl.innerHTML = Array.from({length:n}, (_,i)=>`<span class="pin-dot${i<entry.length?' on':''}"></span>`).join('');
+      }
+      function msg(text, err){
+        subEl.textContent = text; subEl.classList.toggle('err', !!err); subEl.dataset.keep = err ? '1' : '';
+      }
+      function shake(){ ov.classList.remove('shake'); void ov.offsetWidth; ov.classList.add('shake'); if(navigator.vibrate) try{navigator.vibrate(120)}catch(e){} }
+      function finish(ok){
+        document.removeEventListener('keydown', onKey, true);
+        ov.remove(); pinOpen = false; resolve(ok);
+      }
+      function lockRemaining(){
+        const f = pinGetFail(); return Math.max(0, f.until - Date.now());
+      }
+      let lockTimer = null;
+      function refreshLock(){
+        const r = lockRemaining();
+        if(r > 0){
+          msg(`Demasiadas tentativas. Aguarda ${Math.ceil(r/1000)} s`, true);
+          if(!lockTimer) lockTimer = setInterval(()=>{ if(lockRemaining()<=0){ clearInterval(lockTimer); lockTimer=null; msg(opts.sub||'Introduz o PIN', false); } else refreshLock(); }, 500);
+          return true;
+        }
+        return false;
+      }
+      async function submit(){
+        if(stage === 'check'){
+          if(refreshLock()) { entry=''; drawDots(); return; }
+          if(await pinCheck(entry)){
+            pinSetFail({n:0, until:0});
+            if(mode === 'set'){ stage='new'; entry=''; subEl.dataset.keep=''; subEl.classList.remove('err'); setText(); drawDots(); return; }
+            finish(true);
+          } else {
+            const f = pinGetFail(); f.n++;
+            if(f.n >= 5){ const wait = Math.min(300, 15 * Math.pow(2, f.n-5)); f.until = Date.now() + wait*1000; }
+            pinSetFail(f);
+            entry=''; drawDots(); shake();
+            if(!refreshLock()) msg('PIN errado', true);
+          }
+        } else if(stage === 'new'){
+          if(entry.length < 4){ msg('Mínimo 4 dígitos', true); shake(); return; }
+          firstPin = entry; entry=''; stage='confirm'; subEl.dataset.keep=''; subEl.classList.remove('err'); setText(); drawDots();
+        } else if(stage === 'confirm'){
+          if(entry !== firstPin){ entry=''; firstPin=''; stage='new'; drawDots(); shake(); msg('Os PINs não coincidem. Tenta de novo', true); titleEl.textContent = opts.title || 'Definir PIN'; return; }
+          await pinSave(entry);
+          finish(true);
+        }
+      }
+      function press(k){
+        if(k === 'cancel'){ finish(false); return; }
+        if(k === 'del'){ entry = entry.slice(0,-1); drawDots(); return; }
+        if(k === 'ok'){ if(entry.length) submit(); return; }
+        const max = (stage === 'check' && cfg) ? cfg.len : 6;
+        if(entry.length >= max) return;
+        if(subEl.dataset.keep === '1'){ subEl.dataset.keep=''; subEl.classList.remove('err'); setText(); }
+        entry += k; drawDots();
+        if(stage === 'check' && cfg && entry.length === cfg.len) submit();
+      }
+      function onKey(e){
+        if(/^[0-9]$/.test(e.key)){ press(e.key); e.preventDefault(); e.stopPropagation(); }
+        else if(e.key === 'Backspace'){ press('del'); e.preventDefault(); e.stopPropagation(); }
+        else if(e.key === 'Enter'){ press('ok'); e.preventDefault(); e.stopPropagation(); }
+        else if(e.key === 'Escape' && opts.cancelable){ press('cancel'); e.preventDefault(); e.stopPropagation(); }
+      }
+      ov.addEventListener('click', e => { const b = e.target.closest('[data-k]'); if(b) press(b.dataset.k); });
+      document.addEventListener('keydown', onKey, true);
+      setText(); drawDots(); if(stage==='check') refreshLock();
+    });
+  }
+  function pinLockNow(){
+    if(!pinGetCfg() || pinOpen) return;
+    pinScreen({mode:'unlock'});
+  }
+  document.addEventListener('visibilitychange', () => {
+    if(document.hidden){ pinHiddenAt = Date.now(); }
+    else if(pinHiddenAt && pinGetCfg() && Date.now() - pinHiddenAt > PIN_RELOCK_MS){ pinLockNow(); }
+    if(!document.hidden) pinHiddenAt = 0;
+  });
+  function renderPinCard(){
+    const has = !!pinGetCfg();
+    return `
+      <div class="card">
+        <h3>PIN de acesso</h3>
+        <div class="sync-status ${has?'sync-ok':'sync-warn'}">● ${has ? 'PIN ativo neste dispositivo' : 'Sem PIN neste dispositivo'}</div>
+        <p style="color:var(--text-muted);font-size:12.5px;margin:10px 0 12px">O PIN é guardado só neste dispositivo — define-o separadamente no PC e no telemóvel. A app volta a pedir o PIN ao abrir e depois de ficar 1 minuto em segundo plano. É um bloqueio de conveniência (afasta olhares curiosos), não uma encriptação dos dados.</p>
+        <div class="btn-row">
+          ${has ? `<button class="btn btn-primary" id="btnPinLock">Bloquear agora</button>
+          <button class="btn btn-secondary" id="btnPinChange">Alterar PIN</button>
+          <button class="btn btn-secondary" id="btnPinRemove">Remover PIN</button>`
+          : `<button class="btn btn-primary" id="btnPinSet">Definir PIN</button>`}
+        </div>
+      </div>`;
+  }
+  function bindPinCard(){
+    const q = id => root.querySelector(id);
+    if(q('#btnPinSet')) q('#btnPinSet').onclick = async () => { if(await pinScreen({mode:'set', title:'Definir PIN', cancelable:true})){ showToast('PIN definido'); render(); } };
+    if(q('#btnPinChange')) q('#btnPinChange').onclick = async () => { if(await pinScreen({mode:'set', title:'Novo PIN', sub:'Introduz o PIN atual', cancelable:true})){ showToast('PIN alterado'); render(); } };
+    if(q('#btnPinRemove')) q('#btnPinRemove').onclick = async () => { if(await pinScreen({mode:'verify', title:'Remover PIN', sub:'Introduz o PIN atual', cancelable:true})){ localStorage.removeItem(PIN_KEY); pinSetFail({n:0,until:0}); showToast('PIN removido'); render(); } };
+    if(q('#btnPinLock')) q('#btnPinLock').onclick = () => pinLockNow();
+  }
+  // bloqueia logo no arranque, antes de carregar/mostrar dados
+  if(pinGetCfg()) pinScreen({mode:'unlock'});
+  // =========================================================
 
   initGoogleAuth();
   loadData().then(() => tryAutoConnectGoogle());
