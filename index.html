@@ -728,13 +728,29 @@
   // termina exatamente na "Válida até" real (já com qualquer prolongamento aplicado) —
   // os mesmos valores que aparecem na ficha. Se o pagamento cobrir mais que uma caderneta,
   // as seguintes projetam-se a partir daí, de 4 em 4 semanas.
-  function pagamentoCoberturaLabel(p, client){
+  function pagamentoPeriodo(p, client){
     const cadernetas = p.cadernetas || 1;
-    const inicio = (client && client.inicioCadernetaAtual) || p.data;
-    const fim = (client && client.cicloValidade)
+    const inicio = p.inicioCadernetaRef || p.data;
+    const atual = client && client.inicioCadernetaAtual;
+    // pagamento da caderneta em curso: termina na "Válida até" real (inclui prolongamentos)
+    const fim = (atual && atual === inicio && client.cicloValidade)
       ? addDays(client.cicloValidade, 28 * (cadernetas - 1))
       : addDays(inicio, 28 * cadernetas);
-    return `${fmtDateShort(inicio)} a ${fmtDateShort(fim)}`;
+    return { inicio, fim };
+  }
+  function pagamentoCoberturaLabel(p, client){
+    const per = pagamentoPeriodo(p, client);
+    return `${fmtDateShort(per.inicio)} a ${fmtDateShort(per.fim)}`;
+  }
+  // Mensagem de confirmação de pagamento, referente ao período da caderneta paga.
+  function buildPagamentoTexto(client, p){
+    const per = pagamentoPeriodo(p, client);
+    const primeiroNome = (client.nome || '').split(' ')[0];
+    const n = p.cadernetas || 1;
+    const valor = Number(p.valor).toFixed(2).replace('.', ',') + '€';
+    const ref = p.cadernetaRef ? ` (caderneta ${p.cadernetaRef})` : '';
+    const quanto = n > 1 ? `${n} cadernetas${ref}` : `caderneta${ref}`;
+    return `Olá ${primeiroNome}! Confirmo a receção do pagamento de ${valor} referente ${n > 1 ? 'a' : 'à'} ${quanto}, período de ${fmtDateShort(per.inicio)} a ${fmtDateShort(per.fim)}. Obrigado! 🙏`;
   }
   function addDays(iso, n){
     const d = parseDate(iso);
@@ -2798,6 +2814,7 @@
               <div class="list-item">
                 <span>${fmtDateShort(p.data)} — <strong>${Number(p.valor).toFixed(2)}€</strong>${p.cadernetaRef?` <span class="badge-inline bday">Caderneta(s) ${escapeHtml(p.cadernetaRef)} · ${pagamentoCoberturaLabel(p, c)}</span>`:''} ${p.nota?`(${escapeHtml(p.nota)})`:''}</span>
                 <span style="display:flex;gap:6px">
+                  <button class="backbtn" data-wa-pag="${p.id}" title="Enviar confirmação por WhatsApp" style="width:26px;height:26px;font-size:13px">💬</button>
                   <button class="backbtn" data-edit-pag="${p.id}" title="Editar pagamento" style="width:26px;height:26px;font-size:13px">✎</button>
                   <button class="del" data-del-pag="${p.id}">×</button>
                 </span>
@@ -3004,7 +3021,7 @@
           <textarea id="m_whatsappTexto" rows="5" style="width:100%;box-sizing:border-box;background:var(--bg-card);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px;font-family:inherit;font-size:14px">${escapeHtml(modal.texto || '')}</textarea>
           <div class="btn-row" style="margin-top:16px">
             <button class="btn btn-secondary" id="modalCancel">Cancelar</button>
-            <button class="btn btn-secondary" id="modalRegenerarFrase">🔀 Trocar frase</button>
+            ${modal.tipo === 'pagamento' ? '' : '<button class="btn btn-secondary" id="modalRegenerarFrase">🔀 Trocar frase</button>'}
             <button class="btn btn-primary" id="modalEnviarWhatsApp">Abrir WhatsApp</button>
           </div>
         </div>`;
@@ -3416,6 +3433,15 @@
         render();
       };
     });
+    ov.querySelectorAll('[data-wa-pag]').forEach(b => {
+      b.onclick = () => {
+        const c = getClient(state.activeId);
+        const p = (c.pagamentos||[]).find(x => x.id === b.dataset.waPag);
+        if(!p) return;
+        state.modal = { type: 'previewWhatsApp', id: state.activeId, tipo: 'pagamento', texto: buildPagamentoTexto(c, p) };
+        showModal();
+      };
+    });
     ov.querySelectorAll('[data-edit-pag]').forEach(b => {
       b.onclick = () => {
         state.modal = { type: 'editPagamento', id: state.activeId, pagamentoId: b.dataset.editPag };
@@ -3789,7 +3815,14 @@
         await saveData();
         state.modal = null;
         showToast('Pagamento registado');
-        render();
+        const novo = c.pagamentos[c.pagamentos.length-1];
+        if(c.contacto){
+          state.modal = { type: 'previewWhatsApp', id: c.id, tipo: 'pagamento', texto: buildPagamentoTexto(c, novo) };
+          render();
+          showModal();
+        } else {
+          render();
+        }
       }
     };
 
